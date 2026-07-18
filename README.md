@@ -86,6 +86,50 @@ E
 - GIF 會自動走壓縮階梯直到低於 Discord 10MB 上限：**fps 固定 15**（優先保留流暢度），逐級妥協的是色數與寬度（360px/64色 → 320px/48色 → 280px/32色），最後一級才不得已降到 12fps/240px；每級都會過 gifsicle `--lossy=100` 二次壓縮
 - 每人預設 10 秒冷卻（`COOLDOWN_MS`）
 
+## 渲染輸出狀態機
+
+不同入口的渲染結果該貼哪、要不要 @ 人，由 [`runInteractionRender`](src/bot.js) → [`emitResult`](src/bot.js) 這組狀態機決定。核心是**兩個正交的軸**：
+
+- **控制面**（渲染過程中跟操作者對話的訊息）
+  - **公開**：`/render` 的 `deferReply`。結果直接就地替換自己。
+  - **ephemeral**：右鍵選單、`🎬 渲染這份` 按鈕。只有本人看得到，不能當公開結果，成功後自刪。
+- **結果去向**（只有 ephemeral 控制面才需要決定）
+  - **回覆來源訊息**：有存活的來源訊息（右鍵觸發，且一路帶過「補上開頭」繞路）。
+  - **孤兒公開 + @使用者**：沒有來源（`/compose` 流程），或來源已被刪（唯一降級）。用 `channel.send` 送獨立訊息，不帶 reply 參照。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Validating: 觸發（slash / 右鍵 / 反應 / 按鈕）
+    Validating --> MissingHeader: 缺開頭
+    Validating --> Rejected: 太重 / 冷卻中
+    Validating --> Rendering: 通過
+    MissingHeader --> [*]: 出「✏️ 補上開頭」（把 source 記進草稿）
+    Rejected --> [*]
+    Rendering --> Failed: 例外
+    Rendering --> Success: 渲染完成
+    Failed --> [*]: 在控制面顯示錯誤
+
+    Success --> ReplaceOwn: 控制面 = 公開
+    Success --> ReplyToSource: 控制面 = ephemeral 且 source 存活
+    Success --> OrphanPublic: 控制面 = ephemeral 且 無 source
+
+    ReplyToSource --> OrphanPublic: source 已刪（唯一降級）
+
+    ReplaceOwn --> [*]: 就地 editReply 成結果
+    ReplyToSource --> [*]: 回覆來源＋刪掉 ephemeral 控制面
+    OrphanPublic --> [*]: channel.send @使用者＋刪掉 ephemeral 控制面
+```
+
+| 入口 | 控制面 | 結果去向 | @使用者？ |
+|---|---|---|---|
+| `/render` | 公開 | 替換自身 | ✗（slash 已標示觸發者） |
+| 右鍵「渲染譜面」（有開頭） | ephemeral | 回覆來源 | ✗ |
+| 右鍵 → 補上開頭 → 渲染這份 | ephemeral | 回覆來源（來源沒了才降級） | 降級才 @ |
+| `🎬` 反應（有開頭） | 公開（reply 到來源） | 替換自身 | ✗ |
+| `/compose` → 渲染這份 | ephemeral | 孤兒公開 | ✓ |
+
+「來源被刪」不是特例錯誤，而是收斂成 `ReplyToSource → OrphanPublic` 這條**唯一降級邊**：回覆失敗就無聲改用 `channel.send` @使用者公開貼出，不會出現「回覆原始訊息已刪除」的殘框。
+
 ## 復讀機頻道（額外功能）
 
 指定頻道（`src/bot.js` 的 `ECHO_CHANNEL_ID`）內任何人發言，bot 會原樣重複一次，不做 simai 偵測；其他頻道不受影響。

@@ -266,37 +266,75 @@ async function buildRenderPayload(simaiText, opts = {}, footerExtra = '') {
     return { embeds: [embed], files: [file] }; // 影片訊息本身不附 simai 文字（要文字用 /compose）
 }
 
-/** 已收到 → 正在渲染（含預估秒數） → 結果，套用在所有互動式渲染入口 */
 /**
- * 共用渲染流程：已收到 → 正在渲染 → 結果。
- * replyToMessage 有給的話（右鍵選單），最終結果會以「回覆該訊息」的形式公開發出，
- * 而狀態訊息走 ephemeral（只有操作者看得到，不洗頻道）。
+ * 共用渲染流程（狀態機）：已收到 → 正在渲染 → 結果。
+ *
+ * 兩軸模型：
+ *   控制面（跟操作者對話的訊息）——
+ *     - 公開：/render 的 deferReply；結果就地替換自己（見 emitResult）。
+ *     - ephemeral：右鍵選單、按鈕入口；只有本人看得到，不能當公開結果，成功後自刪。
+ *   結果去向（只有 ephemeral 控制面才需決定，由 emitResult 收斂）——
+ *     回覆來源訊息 / 孤兒公開 @使用者。
+ *
+ * ephemeral = 有來源訊息（右鍵）或從按鈕進來。
  */
-async function runInteractionRender(interaction, simaiText, opts = {}, footerExtra = '', replyToMessage = null) {
+async function runInteractionRender(interaction, simaiText, opts = {}, footerExtra = '', replyToMessage = null, fromButton = false) {
     if (!hasLeadingHeader(simaiText)) {
-        return interaction.reply({ ...missingHeaderReply(interaction.user.id, simaiText), flags: MessageFlags.Ephemeral });
+        // 缺開頭時把來源訊息一併記進草稿，讓補完後的「渲染這份」還能回覆到它
+        return interaction.reply({ ...missingHeaderReply(interaction.user.id, simaiText, replyToMessage), flags: MessageFlags.Ephemeral });
     }
     const est = await estimateRender(simaiText);
     if (est && est.etaMs > MAX_RENDER_MS) {
         return interaction.reply({ content: tooHeavyMessage(est.etaSec), flags: MessageFlags.Ephemeral });
     }
-    await interaction.deferReply(replyToMessage ? { flags: MessageFlags.Ephemeral } : {});
-    await interaction.editReply({ content: '✅ 已收到，準備渲染…' });
+
+    const ephemeral = fromButton || !!replyToMessage;
+    if (fromButton) {
+        // 從按鈕進來：就地把帶按鈕的 ephemeral 訊息轉成狀態、移除按鈕
+        await interaction.update({ content: '✅ 已收到，準備渲染…', embeds: [], files: [], components: [] });
+    } else {
+        await interaction.deferReply(ephemeral ? { flags: MessageFlags.Ephemeral } : {});
+        await interaction.editReply({ content: '✅ 已收到，準備渲染…' });
+    }
     try {
         const status = est ? `正在渲染中，預估約 ${est.etaSec} 秒，請稍候…` : '正在渲染中，請稍候…';
         await interaction.editReply({ content: `🎬 ${status}` });
         const payload = await buildRenderPayload(simaiText, opts, footerExtra);
-        if (replyToMessage) {
-            // 直接回覆來源訊息（不 @ 對方），狀態 ephemeral 收尾
-            await replyToMessage.reply({ ...payload, allowedMentions: { repliedUser: false } });
-            await interaction.editReply({ content: '✅ 已渲染完成，見上方回覆' });
-        } else {
-            await interaction.editReply({ content: null, ...payload });
-        }
+        await emitResult(interaction, payload, { ephemeral, source: replyToMessage });
     } catch (e) {
         console.error(e);
         await interaction.editReply({ content: friendlyError(e) }).catch(() => { });
     }
+}
+
+/**
+ * 把渲染結果送到正確去向並收掉控制面。三種 sink：
+ *   替換自身：控制面是公開的（/render）→ 就地 editReply 成結果。
+ *   回覆來源：控制面 ephemeral 且來源訊息存活 → 回覆它，刪掉 ephemeral 控制面。
+ *   孤兒公開：控制面 ephemeral 且無來源（或來源已刪）→ @使用者公開貼出，刪掉 ephemeral 控制面。
+ * 「來源被刪」是唯一降級：回覆失敗就落進孤兒公開，不另外報錯。
+ */
+async function emitResult(interaction, payload, { ephemeral, source }) {
+    if (!ephemeral) {
+        return interaction.editReply({ content: null, ...payload }); // 替換自身
+    }
+    if (source) {
+        const replied = await source
+            .reply({ ...payload, allowedMentions: { repliedUser: false } })
+            .then(() => true, () => false);
+        if (replied) return interaction.deleteReply().catch(() => { }); // 回覆來源
+        // 來源已刪 → 落入孤兒公開
+    }
+    // 孤兒公開 + @使用者：用 channel.send 送「獨立」訊息（不是 followUp）。
+    // followUp 會被當成回覆按鈕那則 ephemeral 訊息，等我們刪掉它就變成「回覆原始訊息已刪除」。
+    const channel = interaction.channel
+        ?? await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
+    await channel?.send({
+        content: `<@${interaction.user.id}>`,
+        ...payload,
+        allowedMentions: { users: [interaction.user.id] },
+    }).catch(() => { });
+    await interaction.deleteReply().catch(() => { });
 }
 
 /** 估算渲染耗時：回傳 { etaMs, etaSec }；解析失敗回傳 null（不擋流程、不套上限） */
@@ -386,7 +424,8 @@ async function handleComposeRenderButton(interaction) {
         });
     }
 
-    await runInteractionRender(interaction, draft.text);
+    // draft.source 只有右鍵「渲染譜面」的流程會帶：帶了就回覆原始 simai 訊息，否則公開發送
+    await runInteractionRender(interaction, draft.text, {}, '', draft.source ?? null, true);
 }
 
 function isFresh(draft) {
@@ -455,9 +494,13 @@ function missingHeaderComponents(userId) {
     )];
 }
 
-/** 存草稿（讓表單能帶出原本內容）＋組出附按鈕的拒絕回覆 */
-function missingHeaderReply(userId, simaiText) {
-    composeDrafts.set(userId, { text: simaiText, createdAt: Date.now() });
+/**
+ * 存草稿（讓表單能帶出原本內容）＋組出附按鈕的拒絕回覆。
+ * source：觸發來源訊息（只有右鍵「渲染譜面」會帶）。一路存進草稿，讓最後「渲染這份」
+ * 能回覆到原始 simai 訊息；/compose、/render、🎬 反應都不帶，最後就不回覆。
+ */
+function missingHeaderReply(userId, simaiText, source = null) {
+    composeDrafts.set(userId, { text: simaiText, createdAt: Date.now(), source });
     return { content: missingHeaderMessage(simaiText), components: missingHeaderComponents(userId) };
 }
 
@@ -523,9 +566,14 @@ async function handleFixHeaderModalSubmit(interaction) {
         header += `{${split}}`;
     }
 
+    const prev = composeDrafts.get(interaction.user.id);
     const text = header + body;
-    composeDrafts.set(interaction.user.id, { text, createdAt: Date.now() });
-    await interaction.reply(composeSuccessPayload(text));
+    // 保留來源訊息（右鍵觸發時才有），讓後面「渲染這份」仍能回覆原始 simai
+    composeDrafts.set(interaction.user.id, { text, createdAt: Date.now(), source: isFresh(prev) ? prev.source : null });
+    // 成功補上開頭後，把帶著「✏️ 補上開頭」按鈕的那則 ephemeral 訊息刪掉，改發整理好的結果
+    await interaction.deferUpdate();
+    await interaction.deleteReply().catch(() => { });
+    await interaction.followUp(composeSuccessPayload(text));
 }
 
 // ============================================================
