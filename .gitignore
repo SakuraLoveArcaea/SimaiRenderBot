@@ -1,0 +1,17 @@
+# 機密：Discord token / app id 絕對不能進版控
+.env
+.env.*
+!.env.example
+
+# 依賴
+node_modules/
+
+# 本機測試輸出
+out/
+
+# Playwright 瀏覽器快取（若手動裝在專案內）
+.cache/
+
+# 系統雜項
+.DS_Store
+*.log

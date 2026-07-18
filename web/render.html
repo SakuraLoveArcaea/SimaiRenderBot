@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Simai Headless Renderer</title>
+    <style>
+        @font-face {
+            font-family: 'combo';
+            src: url('Fonts/Inter.ttf') format('truetype');
+        }
+
+        @font-face {
+            font-family: 'mono';
+            src: url('Fonts/ShareTechMono-Regular.ttf') format('truetype');
+        }
+
+        body {
+            margin: 0;
+            background: #111;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- helper.js 模組頂層會找這個元素，給它一個隱藏的替身 -->
+    <div id="canvasContainer" style="display:none"></div>
+    <canvas id="stage" width="720" height="720"></canvas>
+
+    <script src="./Scripts/mediabunny.cjs"></script>
+    <script type="module">
+        import { simaiDecode, warns, warnpos } from './Scripts/decode.js';
+        import { loadAllImages, SimaiLogicControler, scaleBase } from './Scripts/helper.js';
+        import { SimaiRenderer } from './Scripts/renderer.js';
+
+        // 與主程式 defaultSettings 相同的渲染相關子集
+        const defaultSettings = {
+            speed: 6.5,
+            touchSpeed: 7,
+            slideSpeed: 0,
+            middleDisplay: 1,
+            moviebrightness: -4,
+            showSensor: true,
+            rotateStars: true,
+            pinkStars: false,
+            middleDistance: 0.25,
+            effectDecayTime: 0.4,
+            hanabiEffectDecayTime: 0.8,
+            noteBaseSize: 11,
+            maxSlideCount: 500,
+            renderSurroundingAuxiliaryText: true,
+            slideIllegalRed: false,
+            showUI: false,
+            notPlayHoldEnd: false,
+            backgroundColor: '#000',
+            sfxVolumes: {},
+        };
+
+        let imagesPromise = null;
+        const getImages = () => (imagesPromise ??= loadAllImages());
+
+        // 只解析不渲染，讓 Node 端可以先做語法檢查 / 長度預估
+        window.inspectChart = (simaiText) => {
+            const result = simaiDecode(simaiText, true);
+            return {
+                endTime: result.endTime ?? 0,
+                bpm: result.bpm ?? null,
+                noteCounts: result.notesConts ?? null,
+                warns: [...(warns || [])],
+                warnpos: [...(warnpos || [])],
+            };
+        };
+
+        // 核心：simai 文字 → 影片 bytes（base64）
+        window.renderChart = async (simaiText, opts = {}) => {
+            const {
+                width = 480,
+                height = 480,
+                fps = 30,
+                start = 0,             // 秒，相對於譜面時間軸
+                end = null,            // 秒，null = 譜面結尾
+                tail = 0.6,            // 結尾多渲染一點，讓最後的判定特效跑完
+                maxDuration = 60,      // 安全上限
+                settingsOverride = {},
+            } = opts;
+
+            const {
+                Output, BufferTarget, Mp4OutputFormat, WebMOutputFormat,
+                CanvasSource, QUALITY_LOW, getFirstEncodableVideoCodec,
+            } = window.Mediabunny;
+
+            const settings = { ...defaultSettings, ...settingsOverride };
+            const decoded = simaiDecode(simaiText, true);
+            const notes = decoded.notes || [];
+            if (!notes.length) throw new Error('EMPTY_CHART: 解析後沒有任何 note，請檢查 simai 語法');
+
+            const chartEnd = decoded.endTime ?? 0;
+            const renderStart = Math.max(0, start);
+            let renderEnd = (end ?? chartEnd) + tail;
+            if (renderEnd <= renderStart) throw new Error('BAD_RANGE: 結束時間需大於開始時間');
+            if (renderEnd - renderStart > maxDuration) renderEnd = renderStart + maxDuration;
+
+            const images = await getImages();
+            await document.fonts.ready;
+
+            const off = document.createElement('canvas');
+            off.width = width;
+            off.height = height;
+            const offCtx = off.getContext('2d');
+
+            const renderer = new SimaiRenderer(off, settings);
+            renderer.setImages(images);
+            renderer.setContext(offCtx);
+
+            const p = Math.min(width, height) / scaleBase * renderer.scale;
+            offCtx.setTransform(p, 0, 0, p, width / 2, height / 2);
+
+            // 挑瀏覽器實際支援的編碼器：avc 優先（ffmpeg 相容性最好），否則退 webm
+            const containerCandidates = [
+                { format: () => new Mp4OutputFormat({ fastStart: 'in-memory' }), codecs: ['avc'] },
+                { format: () => new WebMOutputFormat(), codecs: ['vp9', 'vp8'] },
+            ];
+            let format = null, codec = null;
+            for (const cand of containerCandidates) {
+                const f = cand.format();
+                const c = await getFirstEncodableVideoCodec(
+                    f.getSupportedVideoCodecs().filter(x => cand.codecs.includes(x)),
+                    { width, height }
+                );
+                if (c) { format = f; codec = c; break; }
+            }
+            if (!format) throw new Error('NO_ENCODER: 瀏覽器不支援任何可用的視訊編碼器');
+
+            const target = new BufferTarget();
+            const output = new Output({ format, target });
+            // 這段影片只是 GIF 轉檔的中間產物，最終畫質由調色盤量化決定，
+            // H.264 位元率壓得再低，經 GIF 壓縮後也幾乎看不出差異（實測 QUALITY_HIGH → LOW 省 25%+ GIF 體積、肉眼無差）。
+            const videoSource = new CanvasSource(off, {
+                codec,
+                bitrate: QUALITY_LOW,
+                keyFrameInterval: 2,
+                latencyMode: 'quality',
+            });
+            output.addVideoTrack(videoSource, { frameRate: fps });
+            await output.start();
+
+            const outlineImage = images['outline'] ?? await (async () => {
+                try {
+                    const blob = await (await fetch('./Skin/outline.png')).blob();
+                    return await createImageBitmap(blob);
+                } catch { return null; }
+            })();
+
+            const logic = new SimaiLogicControler();
+            const playScoreRes = { tap: 0, hold: 0, slide: 0, touch: 0, break: 0, score: 0, breakScore: 0, invScore: 0 };
+            const step = 1 / fps;
+            const frameCount = Math.max(1, Math.ceil((renderEnd - renderStart) * fps));
+            let nowIndexLocal = 0;
+
+            window.__renderProgress = 0;
+
+            for (let i = 0; i < frameCount; i++) {
+                const t = renderStart + i * step;
+
+                const {
+                    buckets, playCombo, playScore, noteQuantity,
+                    nowIndex: updatedNowIndex,
+                } = logic.get({
+                    renderer,
+                    globalTime: t,
+                    realTime: t,
+                    musicDelay: 0,
+                    playing: false,
+                    timeControlSliding: false,
+                    readyBeat: false,
+                    playedClock: [],
+                    settings,
+                    visualHeight: 0,
+                    notes,
+                    decodedTags: decoded.tags || [],
+                    playScoreRes,
+                    nowIndex: nowIndexLocal,
+                    skipAudioQueue: true,
+                });
+                nowIndexLocal = updatedNowIndex;
+
+                offCtx.save();
+                offCtx.setTransform(1, 0, 0, 1, 0, 0);
+                offCtx.fillStyle = settings.backgroundColor;
+                offCtx.fillRect(0, 0, width, height);
+                if (outlineImage) {
+                    offCtx.setTransform(p, 0, 0, p, width / 2, height / 2);
+                    offCtx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
+                }
+                offCtx.restore();
+
+                renderer.drawFrame({
+                    globalTime: t,
+                    buckets,
+                    dt: step,
+                    showSensor: settings.showSensor,
+                    showSensorText: false,
+                    playCombo,
+                    playScore,
+                    nowIndex: nowIndexLocal,
+                    skipClear: true,
+                    noteQuantity,
+                    playScoreRes,
+                });
+
+                await videoSource.add(i * step, step);
+
+                if (i % 30 === 0) {
+                    window.__renderProgress = (i + 1) / frameCount;
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            await output.finalize();
+            const mime = await output.getMimeType();
+            const ext = format.fileExtension || '.mp4';
+            const buf = target.buffer;
+            if (!buf) throw new Error('NO_BUFFER: 未取得輸出 buffer');
+
+            // page.evaluate 無法直接回傳 ArrayBuffer，用 base64 傳出
+            const bytes = new Uint8Array(buf);
+            let bin = '';
+            const CHUNK = 0x8000;
+            for (let i = 0; i < bytes.length; i += CHUNK) {
+                bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+            }
+            window.__renderProgress = 1;
+            return {
+                base64: btoa(bin),
+                mime,
+                ext,
+                codec,
+                duration: renderEnd - renderStart,
+                frameCount,
+                warns: [...(warns || [])],
+                warnpos: [...(warnpos || [])],
+            };
+        };
+
+        window.__rendererReady = true;
+    </script>
+</body>
+
+</html>
