@@ -37,6 +37,65 @@ node src/cli.js "(150){4}1,2,3,4,E" out/test.gif
 node src/cli.js --file chart.txt out/test.gif
 ```
 
+## 當引擎嵌入（程式 API）
+
+渲染引擎跟 Discord 完全解耦，可以直接 `import` 進自己的專案，把 simai 文字變成 GIF Buffer。核心就一個類別 [`SimaiRenderService`](src/render.js)（[src/cli.js](src/cli.js) 是最小可運行範例）。
+
+```js
+import { SimaiRenderService } from './src/render.js';
+
+const service = new SimaiRenderService();
+await service.init();                 // 起一次瀏覽器 + 靜態伺服器（重，整個生命週期只做一次）
+
+try {
+    // 只解析、不渲染：先拿長度 / BPM / note 數 / 語法警告
+    const info = await service.inspect('(150){4}1,2,3,4,E');
+    // → { endTime, bpm, noteCounts, warns, warnpos }
+
+    // 渲染成 GIF
+    const { gif, duration, quality, warns } = await service.renderGif('(150){4}1,2,3,4,E', {
+        start: 0,        // 起點秒數（相對譜面時間軸）
+        end: null,       // 終點秒數，null = 譜面結尾
+        width: 480,      // 輸出寬（正方形，高等於寬）
+        maxDuration: 30, // 超過的尾段不畫
+    });
+    // gif 是 Buffer，直接寫檔或當附件都行
+    await (await import('node:fs')).promises.writeFile('out.gif', gif);
+} finally {
+    await service.dispose();          // 關瀏覽器 + 伺服器
+}
+```
+
+### API 一覽
+
+| 方法 | 回傳 | 說明 |
+|---|---|---|
+| `new SimaiRenderService()` | — | 建立實例，尚未啟動 |
+| `await service.init()` | `void` | 啟動瀏覽器與靜態伺服器。**用前必呼叫一次**，成本高，請重用同一實例、勿每次渲染都 init |
+| `await service.inspect(simai)` | `{ endTime, bpm, noteCounts, warns, warnpos }` | 只解析不渲染，用來預檢語法 / 估長度。`noteCounts` 可能為 `null` |
+| `await service.renderGif(simai, opts?)` | `{ gif, duration, warns, warnpos, quality }` | 主入口，`gif` 是 GIF `Buffer`。`quality` 是實際採用的壓縮階（`{ fps, width, colors, bayerScale }`） |
+| `service.estimateRenderMs(durationSec, totalNotes)` | `number`（毫秒） | 不實跑就估耗時。`totalNotes` = `Object.values(info.noteCounts)` 加總 |
+| `await service.dispose()` | `void` | 收掉瀏覽器與伺服器，程式結束前呼叫 |
+
+`estimateRenderMs` 也可單獨 `import { estimateRenderMs } from './src/render.js'`（純函式，不需要實例）。
+
+### `renderGif` 的 opts
+
+| 欄位 | 預設 | 說明 |
+|---|---|---|
+| `width` | `480` | 輸出寬（正方形；壓縮階梯可能為了塞進大小上限再往下降到 360/320/280/240） |
+| `start` | `0` | 起點秒數 |
+| `end` | `null` | 終點秒數，`null` = 譜面結尾 |
+| `maxDuration` | `30` | 渲染長度硬上限（秒），超過的尾段不畫 |
+| `sizeLimit` | `9.5 * 1024 * 1024` | GIF 體積上限（bytes）；壓到最低品質仍超過就丟 `GIF_TOO_LARGE` |
+
+### 注意事項
+
+- **序列化**：同一分頁不能並行渲染，`inspect` / `renderGif` 內部用一條 queue 排隊；併發呼叫是安全的，但會一個一個跑。要吞吐就開多個 `SimaiRenderService` 實例。
+- **相依**：`renderGif` 需要 `ffmpeg`（必要）與 Chrome/Chromium；`gifsicle` 選用（沒裝只是檔案較大，不會報錯）。細節見上方[需求](#需求)。
+- **例外**：語法空譜面 `EMPTY_CHART`、範圍錯誤 `BAD_RANGE`、壓不進上限 `GIF_TOO_LARGE`、收不到影格 `NO_FRAMES`；訊息都是 `錯誤碼: 說明` 的格式。
+- 渲染邏輯本身在 [web/render.html](web/render.html) 的 `window.renderChartToFrames`（逐幀 PNG 串回 Node），Node 端只負責串 ffmpeg 轉 GIF；要改畫面行為改那裡，要改輸出/壓縮改 [src/render.js](src/render.js)。
+
 ## 啟動 Discord bot
 
 1. 到 [Discord Developer Portal](https://discord.com/developers/applications) 建立 Application → Bot，拿 Token
