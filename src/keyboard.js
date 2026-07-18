@@ -231,7 +231,9 @@ function disableAll(rows) {
 
 function buildSettingsModal(s) {
     return new ModalBuilder()
-        .setCustomId('kb:modal:settings')
+        // 附 nonce → 每次都是全新表單 id，避開 Discord 客戶端把上次輸入殘留塞回來
+        // （routing 只讀 customId.split(':') 的 index 1 = 'modal'，多一段不影響）
+        .setCustomId(`kb:modal:settings:${Date.now().toString(36)}`)
         .setTitle('BPM／分拍設定')
         .addComponents(
             new ActionRowBuilder().addComponents(

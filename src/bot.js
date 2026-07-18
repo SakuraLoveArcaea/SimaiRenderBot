@@ -26,6 +26,16 @@ const COMPOSE_TTL_MS = 10 * 60 * 1000;
 const COMPOSE_MODAL_ID = 'compose:modal';
 const COMPOSE_RENDER_BTN = 'compose:render';
 
+/**
+ * 每次開 Modal 都給一個獨一無二的 custom_id（附加 nonce）。
+ * Discord 客戶端會用 modal 的 custom_id 快取使用者上次輸入的內容，重開同 id 的表單時
+ * 就算 setValue('') 也會被無視、把舊值塞回來（殘留）。換個 id ＝ 全新表單，天然清空。
+ * 提交時的路由改用 startsWith 前綴比對。
+ */
+function freshModalId(base) {
+    return `${base}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
 const service = new SimaiRenderService();
 const client = new Client({
     intents: [
@@ -59,11 +69,11 @@ client.on('interactionCreate', async (interaction) => {
             && interaction.customId?.startsWith(KB_PREFIX)) {
             return await handleKeyboardComponent(interaction, { buildRenderPayload, checkCooldown, friendlyError });
         }
-        if (interaction.isModalSubmit() && interaction.customId === COMPOSE_MODAL_ID) {
-            return await handleComposeModalSubmit(interaction);
-        }
-        if (interaction.isModalSubmit() && interaction.customId === FIX_HEADER_MODAL_ID) {
+        if (interaction.isModalSubmit() && interaction.customId.startsWith(FIX_HEADER_MODAL_ID)) {
             return await handleFixHeaderModalSubmit(interaction);
+        }
+        if (interaction.isModalSubmit() && interaction.customId.startsWith(COMPOSE_MODAL_ID)) {
+            return await handleComposeModalSubmit(interaction);
         }
         if (interaction.isButton() && interaction.customId === COMPOSE_RENDER_BTN) {
             return await handleComposeRenderButton(interaction);
@@ -187,10 +197,22 @@ async function handleSlashRender(interaction) {
 }
 
 async function handleContextRender(interaction) {
-    const block = extractSimai(interaction.targetMessage?.content ?? '');
-    if (!block) {
+    const raw = interaction.targetMessage?.content ?? '';
+    // 有 code block 就優先抽出來用；沒有就直接吃整則訊息內容（不強制包 ```）。
+    const block = extractSimai(raw);
+    const simai = (block ? block.text : raw).trim();
+
+    if (!simai) {
         return interaction.reply({
-            content: '❌ 這則訊息裡找不到 code block。請把 simai 語法用 \\`\\`\\` 包起來（建議標記語言為 `simai`）',
+            content: '❌ 這則訊息是空的，沒有可渲染的內容',
+            flags: MessageFlags.Ephemeral,
+        });
+    }
+    // 一點點防呆：非 code block 的純文字若完全不含音符/節奏字元，多半是聊天內容，不硬送進渲染。
+    // （明確包成 code block 的內容視為使用者確定要渲染，跳過這關；真的是譜面卻缺開頭，後面 header 檢查會接手。）
+    if (!block && !looksLikeSimai(simai)) {
+        return interaction.reply({
+            content: '❌ 看起來不像 simai 語法。若確定要渲染，請把譜面用 \\`\\`\\` 包成 code block 再試',
             flags: MessageFlags.Ephemeral,
         });
     }
@@ -203,7 +225,12 @@ async function handleContextRender(interaction) {
         });
     }
 
-    await runInteractionRender(interaction, block.text, {}, `來源：${interaction.targetMessage.url}`);
+    await runInteractionRender(interaction, simai, {}, `來源：${interaction.targetMessage.url}`);
+}
+
+/** 極寬鬆的防呆：simai 片段必含音符位置（1–8）且有節奏逗號或開頭括號其一 */
+function looksLikeSimai(text) {
+    return /[1-8]/.test(text) && /[,({]/.test(text);
 }
 
 // ============================================================
@@ -289,7 +316,7 @@ function fenceSimai(simaiText) {
 async function handleComposeCommand(interaction) {
     const draft = composeDrafts.get(interaction.user.id);
     const modal = new ModalBuilder()
-        .setCustomId(COMPOSE_MODAL_ID)
+        .setCustomId(freshModalId(COMPOSE_MODAL_ID))
         .setTitle('輸入 simai 語法')
         .addComponents(
             new ActionRowBuilder().addComponents(
@@ -452,7 +479,7 @@ async function handleFixHeaderButton(interaction) {
 
     const title = !hasBpm && !hasSplit ? '補上 BPM／分拍' : !hasBpm ? '補上 BPM' : '補上分拍';
     await interaction.showModal(
-        new ModalBuilder().setCustomId(FIX_HEADER_MODAL_ID).setTitle(title).addComponents(...rows)
+        new ModalBuilder().setCustomId(freshModalId(FIX_HEADER_MODAL_ID)).setTitle(title).addComponents(...rows)
     );
 }
 
