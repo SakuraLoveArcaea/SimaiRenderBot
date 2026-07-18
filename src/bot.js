@@ -225,7 +225,8 @@ async function handleContextRender(interaction) {
         });
     }
 
-    await runInteractionRender(interaction, simai, {}, `來源：${interaction.targetMessage.url}`);
+    // 最終結果以「回覆這則訊息」的形式發出（footer 不用再標來源，reply 本身就指著它）
+    await runInteractionRender(interaction, simai, {}, '', interaction.targetMessage);
 }
 
 /** 極寬鬆的防呆：simai 片段必含音符位置（1–8）且有節奏逗號或開頭括號其一 */
@@ -266,7 +267,12 @@ async function buildRenderPayload(simaiText, opts = {}, footerExtra = '') {
 }
 
 /** 已收到 → 正在渲染（含預估秒數） → 結果，套用在所有互動式渲染入口 */
-async function runInteractionRender(interaction, simaiText, opts = {}, footerExtra = '') {
+/**
+ * 共用渲染流程：已收到 → 正在渲染 → 結果。
+ * replyToMessage 有給的話（右鍵選單），最終結果會以「回覆該訊息」的形式公開發出，
+ * 而狀態訊息走 ephemeral（只有操作者看得到，不洗頻道）。
+ */
+async function runInteractionRender(interaction, simaiText, opts = {}, footerExtra = '', replyToMessage = null) {
     if (!hasLeadingHeader(simaiText)) {
         return interaction.reply({ ...missingHeaderReply(interaction.user.id, simaiText), flags: MessageFlags.Ephemeral });
     }
@@ -274,13 +280,19 @@ async function runInteractionRender(interaction, simaiText, opts = {}, footerExt
     if (est && est.etaMs > MAX_RENDER_MS) {
         return interaction.reply({ content: tooHeavyMessage(est.etaSec), flags: MessageFlags.Ephemeral });
     }
-    await interaction.deferReply();
+    await interaction.deferReply(replyToMessage ? { flags: MessageFlags.Ephemeral } : {});
     await interaction.editReply({ content: '✅ 已收到，準備渲染…' });
     try {
         const status = est ? `正在渲染中，預估約 ${est.etaSec} 秒，請稍候…` : '正在渲染中，請稍候…';
         await interaction.editReply({ content: `🎬 ${status}` });
         const payload = await buildRenderPayload(simaiText, opts, footerExtra);
-        await interaction.editReply({ content: null, ...payload });
+        if (replyToMessage) {
+            // 直接回覆來源訊息（不 @ 對方），狀態 ephemeral 收尾
+            await replyToMessage.reply({ ...payload, allowedMentions: { repliedUser: false } });
+            await interaction.editReply({ content: '✅ 已渲染完成，見上方回覆' });
+        } else {
+            await interaction.editReply({ content: null, ...payload });
+        }
     } catch (e) {
         console.error(e);
         await interaction.editReply({ content: friendlyError(e) }).catch(() => { });
