@@ -2,8 +2,8 @@
 
 Discord bot：輸入 simai 語法片段 → 產出譜面預覽 GIF。
 
-渲染核心提取自 [web-mai-chart-x](https://github.com/susuy0725/web-mai-chart-x)（decode / renderer / helper / mediabunny），
-以無頭 Chromium 逐幀渲染成影片，再用 ffmpeg 轉成壓縮 GIF。
+渲染核心提取自 [web-mai-chart-x](https://github.com/susuy0725/web-mai-chart-x)（decode / renderer / helper），
+以無頭 Chromium 逐幀畫 canvas，PNG 幀直接串給 ffmpeg 轉成壓縮 GIF。
 
 ## 架構
 
@@ -11,10 +11,14 @@ Discord bot：輸入 simai 語法片段 → 產出譜面預覽 GIF。
 simai 文字
   → Playwright 無頭 Chromium 開 web/render.html
       → simaiDecode() 解析 → SimaiLogicControler 逐幀算狀態 → SimaiRenderer 畫 canvas
-      → Mediabunny (WebCodecs) 編碼成 MP4/WebM
-  → ffmpeg palettegen 兩段式轉 GIF + gifsicle lossy 二次壓縮（自動降畫質直到 < 10MB）
+      → 每幀 toDataURL 成 PNG，透過 __emitFrame binding 串回 Node
+  → ffmpeg 從 stdin 讀 PNG 序列，palettegen 兩段式轉 GIF + gifsicle lossy 二次壓縮（自動降畫質直到 < 10MB）
   → Discord 附件回覆
 ```
+
+以 PNG 幀直接串給 ffmpeg，跳過了 WebCodecs 的 H.264 中間層（那趟編碼/解碼對最終 GIF 畫質毫無幫助，畫質由調色盤量化決定）；
+且瀏覽器直接以 GIF 輸出的 15fps 渲染（而非畫 30fps 再丟一半）。兩者合計讓固定開銷約砍半、稀疏長譜面渲染再快 15~25%。
+副帶好處：不再需要瀏覽器支援 H.264 編碼，vanilla Playwright Chromium 也能跑。
 
 ## 需求
 
@@ -58,7 +62,9 @@ npm run bot
 | 貼出 ` ```simai ` code block | bot 自動加 🎬 反應，有人點了才渲染（避免洗版） |
 
 渲染結果（GIF）本身不附 simai 文字，只有 Embed + 圖片；需要可複製的 simai 文字請用 `/compose`。
-每個渲染入口都會依序更新狀態：`✅ 已收到，準備渲染…` → `🎬 正在渲染中，請稍候…` → 最終結果。
+每個渲染入口都會依序更新狀態：`✅ 已收到，準備渲染…` → `🎬 正在渲染中，預估約 N 秒，請稍候…` → 最終結果。
+預估秒數來自 `estimateRenderMs()`（[src/render.js](src/render.js)）：對 9 組長度×密度組合實測擬合的迴歸公式
+`ms ≈ (523 + 143.6×秒數 + 65×總音符數) × 1.15`（PNG 串流管線下重新擬合，誤差多在 ±3%）。
 
 多行譜面建議直接在頻道貼：
 
@@ -70,16 +76,24 @@ E
 ```
 ````
 
+- 開頭沒寫 `(BPM){分拍}` 會直接被擋下，不會讓 decode.js 靜默套用 60bpm/{4} 預設值渲染出錯誤結果；
+  拒絕訊息會附一顆「✏️ 補上開頭」按鈕，點下去跳出表單——**智能判斷缺哪一半**，只顯示缺的欄位（BPM 或分拍或兩者），
+  並帶出原本的譜面內容，填完自動接上缺的設定
 - 語法警告會用 code block + `^^^` 指出出錯的逗號段
 - 🎬 自動偵測需要在 Developer Portal → Bot 開啟 **Message Content Intent**
-- 單次渲染上限預設 30 秒（`MAX_DURATION`），太長請用 `start`/`end` 選段
+- 單次渲染的譜面長度上限預設 30 秒（`MAX_DURATION`），超過的部分不畫，太長請用 `start`/`end` 選段
+- 渲染前先估算耗時，**預估超過 30 秒（`MAX_RENDER_SEC`）就直接拒絕**，不讓使用者空等；主要會擋到極端密集的譜面
 - GIF 會自動走壓縮階梯直到低於 Discord 10MB 上限：**fps 固定 15**（優先保留流暢度），逐級妥協的是色數與寬度（360px/64色 → 320px/48色 → 280px/32色），最後一級才不得已降到 12fps/240px；每級都會過 gifsicle `--lossy=100` 二次壓縮
 - 每人預設 10 秒冷卻（`COOLDOWN_MS`）
+
+## 復讀機頻道（額外功能）
+
+指定頻道（`src/bot.js` 的 `ECHO_CHANNEL_ID`）內任何人發言，bot 會原樣重複一次，不做 simai 偵測；其他頻道不受影響。
 
 ## 檔案結構
 
 ```
-web/render.html        無 UI 渲染頁：window.renderChart(simai, opts) → 影片 base64
+web/render.html        無 UI 渲染頁：window.renderChartToFrames(simai, opts) 逐幀 PNG 串回 Node
 web/Scripts/           自 web-mai-chart-x 提取的核心（未修改）
 web/Skin/  web/Fonts/  素材
 src/server.js          服務 web/ 的極簡靜態伺服器
@@ -91,7 +105,7 @@ src/bot.js             Discord bot 本體
 
 ## 致謝
 
-`web/Scripts/`（decode.js / renderer.js / helper.js / indexDB.js / mediabunny.cjs）與 `web/Skin/`、`web/Fonts/`
+`web/Scripts/`（decode.js / renderer.js / helper.js / indexDB.js）與 `web/Skin/`、`web/Fonts/`
 均直接提取自 [susuy0725/web-mai-chart-x](https://github.com/susuy0725/web-mai-chart-x)，未修改渲染邏輯本身。
 該專案的 Skin 與音訊素材則源自 [LingFeng-bbben/MajdataView](https://github.com/LingFeng-bbben/MajdataView) 與
 [re-poem/MajdataViewX](https://github.com/re-poem/MajdataViewX)。

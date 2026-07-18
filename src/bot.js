@@ -13,9 +13,11 @@ if (!token) {
     process.exit(1);
 }
 
-const MAX_DURATION = Number(process.env.MAX_DURATION ?? 30); // 最長渲染秒數
+const MAX_DURATION = Number(process.env.MAX_DURATION ?? 30); // 譜面最長渲染秒數（超過的部分不畫）
+const MAX_RENDER_MS = Number(process.env.MAX_RENDER_SEC ?? 30) * 1000; // 預估渲染耗時上限：超過就拒絕，不讓使用者空等
 const COOLDOWN_MS = Number(process.env.COOLDOWN_MS ?? 10000); // 每人冷卻
 const REACT_EMOJI = '🎬';
+const ECHO_CHANNEL_ID = '1527650013981966450'; // 額外功能：這個頻道當復讀機，其他頻道不受影響
 
 const cooldowns = new Map();
 const renderedMessages = new Set(); // 🎬 反應流程：同一則訊息只渲染一次
@@ -60,8 +62,14 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.isModalSubmit() && interaction.customId === COMPOSE_MODAL_ID) {
             return await handleComposeModalSubmit(interaction);
         }
+        if (interaction.isModalSubmit() && interaction.customId === FIX_HEADER_MODAL_ID) {
+            return await handleFixHeaderModalSubmit(interaction);
+        }
         if (interaction.isButton() && interaction.customId === COMPOSE_RENDER_BTN) {
             return await handleComposeRenderButton(interaction);
+        }
+        if (interaction.isButton() && interaction.customId.startsWith(FIX_HEADER_PREFIX)) {
+            return await handleFixHeaderButton(interaction);
         }
     } catch (e) {
         console.error(e);
@@ -79,6 +87,13 @@ client.on('interactionCreate', async (interaction) => {
 // ============================================================
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
+
+    // 額外功能：指定頻道當復讀機，原樣重複訊息內容，不做 simai 偵測
+    if (message.channelId === ECHO_CHANNEL_ID) {
+        if (message.content) await message.channel.send(message.content).catch(() => { });
+        return;
+    }
+
     const block = extractSimai(message.content);
     if (block?.tagged) {
         await message.react(REACT_EMOJI).catch(() => { });
@@ -98,6 +113,17 @@ client.on('messageReactionAdd', async (reaction, user) => {
         const block = extractSimai(message.content);
         if (!block?.tagged) return;
 
+        if (!hasLeadingHeader(block.text)) {
+            await message.reply(missingHeaderReply(user.id, block.text)).catch(() => { });
+            return; // 沒消耗冷卻、沒標記為已渲染，補上後可以再點一次 🎬
+        }
+
+        const est = await estimateRender(block.text);
+        if (est && est.etaMs > MAX_RENDER_MS) {
+            await message.reply(tooHeavyMessage(est.etaSec)).catch(() => { });
+            return; // 沒消耗冷卻、沒標記為已渲染
+        }
+
         const remain = checkCooldown(user.id);
         if (remain > 0) return; // 反應流程沒有回話餘地，冷卻中就靜默忽略
 
@@ -106,7 +132,8 @@ client.on('messageReactionAdd', async (reaction, user) => {
 
         const placeholder = await message.reply('✅ 已收到，準備渲染…');
         try {
-            await placeholder.edit(`${REACT_EMOJI} 正在渲染中，請稍候…`);
+            const status = est ? `正在渲染中，預估約 ${est.etaSec} 秒，請稍候…` : '正在渲染中，請稍候…';
+            await placeholder.edit(`${REACT_EMOJI} ${status}`);
             const payload = await buildRenderPayload(block.text, {}, `由 ${user.displayName ?? user.username} 觸發`);
             await placeholder.edit({ content: null, ...payload });
         } catch (e) {
@@ -124,6 +151,9 @@ client.on('messageReactionAdd', async (reaction, user) => {
 // ============================================================
 async function handleCheck(interaction) {
     const simai = stripCodeFence(interaction.options.getString('simai', true));
+    if (!hasLeadingHeader(simai)) {
+        return interaction.reply({ ...missingHeaderReply(interaction.user.id, simai), flags: MessageFlags.Ephemeral });
+    }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const info = await service.inspect(simai);
@@ -208,18 +238,44 @@ async function buildRenderPayload(simaiText, opts = {}, footerExtra = '') {
     return { embeds: [embed], files: [file] }; // 影片訊息本身不附 simai 文字（要文字用 /compose）
 }
 
-/** 已收到 → 正在渲染 → 結果，套用在所有互動式渲染入口 */
+/** 已收到 → 正在渲染（含預估秒數） → 結果，套用在所有互動式渲染入口 */
 async function runInteractionRender(interaction, simaiText, opts = {}, footerExtra = '') {
+    if (!hasLeadingHeader(simaiText)) {
+        return interaction.reply({ ...missingHeaderReply(interaction.user.id, simaiText), flags: MessageFlags.Ephemeral });
+    }
+    const est = await estimateRender(simaiText);
+    if (est && est.etaMs > MAX_RENDER_MS) {
+        return interaction.reply({ content: tooHeavyMessage(est.etaSec), flags: MessageFlags.Ephemeral });
+    }
     await interaction.deferReply();
     await interaction.editReply({ content: '✅ 已收到，準備渲染…' });
     try {
-        await interaction.editReply({ content: '🎬 正在渲染中，請稍候…' });
+        const status = est ? `正在渲染中，預估約 ${est.etaSec} 秒，請稍候…` : '正在渲染中，請稍候…';
+        await interaction.editReply({ content: `🎬 ${status}` });
         const payload = await buildRenderPayload(simaiText, opts, footerExtra);
         await interaction.editReply({ content: null, ...payload });
     } catch (e) {
         console.error(e);
         await interaction.editReply({ content: friendlyError(e) }).catch(() => { });
     }
+}
+
+/** 估算渲染耗時：回傳 { etaMs, etaSec }；解析失敗回傳 null（不擋流程、不套上限） */
+async function estimateRender(simaiText) {
+    try {
+        const info = await service.inspect(simaiText);
+        const totalNotes = Object.values(info.noteCounts ?? {}).reduce((a, b) => a + b, 0);
+        const durationSec = Math.min(info.endTime, MAX_DURATION); // 對齊 renderGif 的截斷上限
+        const etaMs = service.estimateRenderMs(durationSec, totalNotes);
+        return { etaMs, etaSec: Math.ceil(etaMs / 1000) };
+    } catch {
+        return null;
+    }
+}
+
+function tooHeavyMessage(etaSec) {
+    const limit = Math.round(MAX_RENDER_MS / 1000);
+    return `❌ 這段譜面預估要渲染約 ${etaSec} 秒，超過上限 ${limit} 秒。請用 \`start\`／\`end\` 選一小段、或減少音符後再試。`;
 }
 
 /** 包成 ```simai``` 區塊：方便複製貼到編輯器繼續編輯，貼回頻道也能再觸發 🎬 自動偵測 */
@@ -256,18 +312,25 @@ async function handleComposeModalSubmit(interaction) {
         return interaction.reply({ content: '❌ 內容是空的', flags: MessageFlags.Ephemeral });
     }
 
-    composeDrafts.set(interaction.user.id, { text, createdAt: Date.now() });
+    if (!hasLeadingHeader(text)) {
+        return interaction.reply({ ...missingHeaderReply(interaction.user.id, text), flags: MessageFlags.Ephemeral });
+    }
 
+    composeDrafts.set(interaction.user.id, { text, createdAt: Date.now() }); // 存起來，重開 /compose 可以接著改
+    await interaction.reply(composeSuccessPayload(text));
+}
+
+/** /compose 成功整理出 simai 文字後的回覆：可複製區塊 + 渲染按鈕 */
+function composeSuccessPayload(text) {
     const renderBtn = new ButtonBuilder()
         .setCustomId(COMPOSE_RENDER_BTN)
         .setLabel('🎬 渲染這份')
         .setStyle(ButtonStyle.Primary);
-
-    await interaction.reply({
+    return {
         content: fenceSimai(text),
         components: [new ActionRowBuilder().addComponents(renderBtn)],
         flags: MessageFlags.Ephemeral,
-    });
+    };
 }
 
 async function handleComposeRenderButton(interaction) {
@@ -315,6 +378,115 @@ function extractSimai(content) {
 function stripCodeFence(s) {
     const block = extractSimai(s);
     return block ? block.text : s;
+}
+
+// ============================================================
+// 開頭必須有 (BPM){分拍}：沒寫的話 decode.js 會靜默套用 60bpm/{4} 預設值，
+// 結果通常是錯的卻不會有任何警告，所以直接攔在渲染前請使用者補上重輸。
+// ============================================================
+const FIX_HEADER_PREFIX = 'compose:fixheader:';
+const FIX_HEADER_MODAL_ID = 'compose:fixheader:modal';
+
+/** 分別偵測開頭的 BPM `(N)` 與分拍 `{N}`（順序不拘，decode 兩種都吃）。 */
+function analyzeHeader(simaiText) {
+    let s = (simaiText ?? '').replace(/\|\|.*$/gm, '').replace(/\s+/g, '');
+    let hasBpm = false, hasSplit = false, m;
+    while ((m = s.match(/^\([^()]*\)/)) || (m = s.match(/^\{[^{}]*\}/))) {
+        if (m[0][0] === '(') hasBpm = true; else hasSplit = true;
+        s = s.slice(m[0].length);
+    }
+    return { hasBpm, hasSplit };
+}
+
+function hasLeadingHeader(simaiText) {
+    const { hasBpm, hasSplit } = analyzeHeader(simaiText);
+    return hasBpm && hasSplit;
+}
+
+function missingHeaderMessage(simaiText) {
+    const { hasBpm, hasSplit } = analyzeHeader(simaiText);
+    const missing = [!hasBpm && 'BPM `(150)`', !hasSplit && '分拍 `{4}`'].filter(Boolean).join(' 和 ');
+    return `❌ 開頭缺少 ${missing}，要補在**最前面**。點下方按鈕填入。`;
+}
+
+/** 「✏️ 補上開頭」按鈕：customId 帶著發起者 id，點擊時只有本人能用 */
+function missingHeaderComponents(userId) {
+    return [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(FIX_HEADER_PREFIX + userId).setLabel('✏️ 補上開頭').setStyle(ButtonStyle.Primary),
+    )];
+}
+
+/** 存草稿（讓表單能帶出原本內容）＋組出附按鈕的拒絕回覆 */
+function missingHeaderReply(userId, simaiText) {
+    composeDrafts.set(userId, { text: simaiText, createdAt: Date.now() });
+    return { content: missingHeaderMessage(simaiText), components: missingHeaderComponents(userId) };
+}
+
+/** 點「✏️ 補上開頭」：智能判斷缺什麼，只顯示缺的欄位（BPM／分拍），並帶出原本 simai */
+async function handleFixHeaderButton(interaction) {
+    const ownerId = interaction.customId.slice(FIX_HEADER_PREFIX.length);
+    if (interaction.user.id !== ownerId) {
+        return interaction.reply({ content: '❌ 這不是你觸發的，請自己輸入指令', flags: MessageFlags.Ephemeral });
+    }
+
+    const draft = composeDrafts.get(interaction.user.id);
+    const { hasBpm, hasSplit } = analyzeHeader(isFresh(draft) ? draft.text : '');
+    const rows = [];
+    if (!hasBpm) {
+        rows.push(new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('bpm').setLabel('BPM')
+                .setStyle(TextInputStyle.Short).setPlaceholder('例如 150').setRequired(true),
+        ));
+    }
+    if (!hasSplit) {
+        rows.push(new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('split').setLabel('分拍（{N}，例如 4 = 四分音符）')
+                .setStyle(TextInputStyle.Short).setPlaceholder('例如 4').setRequired(true),
+        ));
+    }
+    rows.push(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('body').setLabel('譜面內容（開頭會自動補上缺的設定）')
+            .setStyle(TextInputStyle.Paragraph).setMaxLength(3900).setRequired(true)
+            .setValue(isFresh(draft) ? draft.text : ''),
+    ));
+
+    const title = !hasBpm && !hasSplit ? '補上 BPM／分拍' : !hasBpm ? '補上 BPM' : '補上分拍';
+    await interaction.showModal(
+        new ModalBuilder().setCustomId(FIX_HEADER_MODAL_ID).setTitle(title).addComponents(...rows)
+    );
+}
+
+async function handleFixHeaderModalSubmit(interaction) {
+    const getField = (id) => {
+        try { return interaction.fields.getTextInputValue(id).trim(); } catch { return ''; }
+    };
+
+    const body = stripCodeFence(getField('body')).trim();
+    if (!body) {
+        return interaction.reply({ content: '❌ 譜面內容是空的', flags: MessageFlags.Ephemeral });
+    }
+
+    // 依 body 目前的狀態，只補「還缺的」部分（使用者可能已在 body 裡自己補了）
+    const { hasBpm, hasSplit } = analyzeHeader(body);
+    let header = '';
+    if (!hasBpm) {
+        const bpm = Number(getField('bpm'));
+        if (!Number.isFinite(bpm) || bpm <= 0) {
+            return interaction.reply({ content: '❌ BPM 請填正數，例如 `150`', flags: MessageFlags.Ephemeral });
+        }
+        header += `(${bpm})`;
+    }
+    if (!hasSplit) {
+        const split = Number(getField('split'));
+        if (!Number.isFinite(split) || split <= 0) {
+            return interaction.reply({ content: '❌ 分拍請填正數，例如 `4`', flags: MessageFlags.Ephemeral });
+        }
+        header += `{${split}}`;
+    }
+
+    const text = header + body;
+    composeDrafts.set(interaction.user.id, { text, createdAt: Date.now() });
+    await interaction.reply(composeSuccessPayload(text));
 }
 
 // ============================================================

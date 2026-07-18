@@ -27,7 +27,6 @@
     <div id="canvasContainer" style="display:none"></div>
     <canvas id="stage" width="720" height="720"></canvas>
 
-    <script src="./Scripts/mediabunny.cjs"></script>
     <script type="module">
         import { simaiDecode, warns, warnpos } from './Scripts/decode.js';
         import { loadAllImages, SimaiLogicControler, scaleBase } from './Scripts/helper.js';
@@ -71,23 +70,20 @@
             };
         };
 
-        // 核心：simai 文字 → 影片 bytes（base64）
-        window.renderChart = async (simaiText, opts = {}) => {
+        // 核心：simai 文字 → 逐幀渲染，每幀以 PNG(base64) 透過 __emitFrame 串回 Node，
+        // 由 Node 端直接餵給 ffmpeg 轉 GIF。相較舊版跳過了 WebCodecs 的 H.264 編碼（Node 端也省了解碼），
+        // 中間那一趟編碼/解碼對最終 GIF 畫質毫無幫助（畫質由調色盤量化決定），純屬浪費。
+        window.renderChartToFrames = async (simaiText, opts = {}) => {
             const {
                 width = 480,
                 height = 480,
-                fps = 30,
+                fps = 15,              // 直接以 GIF 輸出 fps 渲染，不再畫 30fps 再丟一半
                 start = 0,             // 秒，相對於譜面時間軸
                 end = null,            // 秒，null = 譜面結尾
                 tail = 0.6,            // 結尾多渲染一點，讓最後的判定特效跑完
                 maxDuration = 60,      // 安全上限
                 settingsOverride = {},
             } = opts;
-
-            const {
-                Output, BufferTarget, Mp4OutputFormat, WebMOutputFormat,
-                CanvasSource, QUALITY_LOW, getFirstEncodableVideoCodec,
-            } = window.Mediabunny;
 
             const settings = { ...defaultSettings, ...settingsOverride };
             const decoded = simaiDecode(simaiText, true);
@@ -114,35 +110,6 @@
 
             const p = Math.min(width, height) / scaleBase * renderer.scale;
             offCtx.setTransform(p, 0, 0, p, width / 2, height / 2);
-
-            // 挑瀏覽器實際支援的編碼器：avc 優先（ffmpeg 相容性最好），否則退 webm
-            const containerCandidates = [
-                { format: () => new Mp4OutputFormat({ fastStart: 'in-memory' }), codecs: ['avc'] },
-                { format: () => new WebMOutputFormat(), codecs: ['vp9', 'vp8'] },
-            ];
-            let format = null, codec = null;
-            for (const cand of containerCandidates) {
-                const f = cand.format();
-                const c = await getFirstEncodableVideoCodec(
-                    f.getSupportedVideoCodecs().filter(x => cand.codecs.includes(x)),
-                    { width, height }
-                );
-                if (c) { format = f; codec = c; break; }
-            }
-            if (!format) throw new Error('NO_ENCODER: 瀏覽器不支援任何可用的視訊編碼器');
-
-            const target = new BufferTarget();
-            const output = new Output({ format, target });
-            // 這段影片只是 GIF 轉檔的中間產物，最終畫質由調色盤量化決定，
-            // H.264 位元率壓得再低，經 GIF 壓縮後也幾乎看不出差異（實測 QUALITY_HIGH → LOW 省 25%+ GIF 體積、肉眼無差）。
-            const videoSource = new CanvasSource(off, {
-                codec,
-                bitrate: QUALITY_LOW,
-                keyFrameInterval: 2,
-                latencyMode: 'quality',
-            });
-            output.addVideoTrack(videoSource, { frameRate: fps });
-            await output.start();
 
             const outlineImage = images['outline'] ?? await (async () => {
                 try {
@@ -208,35 +175,23 @@
                     playScoreRes,
                 });
 
-                await videoSource.add(i * step, step);
+                // toDataURL 直接回傳 base64；切掉 "data:image/png;base64," 前綴後串回 Node。
+                // await 每一幀 → 天然背壓，避免瀏覽器搶跑塞爆 CDP 佇列。
+                const dataUrl = off.toDataURL('image/png');
+                await window.__emitFrame(dataUrl.slice(dataUrl.indexOf(',') + 1));
 
                 if (i % 30 === 0) {
                     window.__renderProgress = (i + 1) / frameCount;
-                    await new Promise(r => setTimeout(r, 0));
                 }
             }
 
-            await output.finalize();
-            const mime = await output.getMimeType();
-            const ext = format.fileExtension || '.mp4';
-            const buf = target.buffer;
-            if (!buf) throw new Error('NO_BUFFER: 未取得輸出 buffer');
-
-            // page.evaluate 無法直接回傳 ArrayBuffer，用 base64 傳出
-            const bytes = new Uint8Array(buf);
-            let bin = '';
-            const CHUNK = 0x8000;
-            for (let i = 0; i < bytes.length; i += CHUNK) {
-                bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-            }
             window.__renderProgress = 1;
             return {
-                base64: btoa(bin),
-                mime,
-                ext,
-                codec,
-                duration: renderEnd - renderStart,
+                width,
+                height,
+                fps,
                 frameCount,
+                duration: renderEnd - renderStart,
                 warns: [...(warns || [])],
                 warnpos: [...(warnpos || [])],
             };
