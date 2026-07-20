@@ -9449,6 +9449,86 @@ var innerCirleBase = (() => {
   const innerCirleScale = 0.889;
   return scaleBase * innerCirleScale / 2;
 })();
+var baseURL = "./Skin/";
+var baseImageKeys = [
+  "no_image",
+  "tap",
+  "tap_break",
+  "tap_each",
+  "tap_ex",
+  "tap_mine",
+  "NormalArc",
+  "BreakArc",
+  "EachArc",
+  "SlideArc",
+  "MineArc",
+  "hold",
+  "hold_break",
+  "hold_each",
+  "hold_ex",
+  "hold_mine",
+  "hold_break_on",
+  "hold_each_on",
+  "hold_on",
+  "Hold_End",
+  "Hold_Break_End",
+  "Hold_Each_End",
+  "Hold_Mine_End",
+  "touch",
+  "touch_each",
+  "touch_mine",
+  "touch_point",
+  "touch_point_each",
+  "touch_point_mine",
+  "touch_border_2",
+  "touch_border_3",
+  "touch_border_2_each",
+  "touch_border_3_each",
+  "touch_border_2_mine",
+  "touch_border_3_mine",
+  "star",
+  "star_pink",
+  "star_break",
+  "star_each",
+  "star_ex",
+  "star_mine",
+  "star_double",
+  "star_pink_double",
+  "star_break_double",
+  "star_each_double",
+  "star_ex_double",
+  "star_mine_double",
+  "slide",
+  "slide_each",
+  "slide_break",
+  "slide_mine",
+  "touchhold_0",
+  "touchhold_1",
+  "touchhold_2",
+  "touchhold_3",
+  "touchhold_border",
+  "touchhold_0_mine",
+  "touchhold_1_mine",
+  "touchhold_2_mine",
+  "touchhold_3_mine",
+  "touchhold_border_mine"
+];
+var wifiPrefixes = ["wifi_", "wifi_break_", "wifi_each_", "wifi_mine_"];
+var exColor = {
+  tap: "#D8A2C9",
+  star: "#00DBF4",
+  double: "#DCDA6B",
+  break: "#EBBA63"
+};
+function drawImgAtcenter(ctx2, img, size2, offsetX = 0, offsetY = 0, imgWidthMul = 1, imgHeightMul = 1) {
+  ctx2.drawImage(
+    img,
+    -size2 / 2 * imgWidthMul + offsetX,
+    -size2 / 2 * imgHeightMul + offsetY,
+    size2 * imgWidthMul,
+    size2 * imgHeightMul
+  );
+}
 function parseTag(str, open, close, specialCase = false) {
   const regex = new RegExp(`\\${open}([^\\${open}\\${close}]*)\\${close}`, "g");
   const matches = [...str.matchAll(regex)];
@@ -10217,8 +10297,210 @@ c2.lineTo(-Math.cos(Math.PI * (-0.375 + 0.75)) * innerCirleBase * 0.205 * 1.135,
 c2.lineTo(-(Math.cos(Math.PI * (-0.375 + 0.75)) * innerCirleBase * 0.205 * 1.135 - 3), Math.sin(Math.PI * (-0.375 + 0.75)) * innerCirleBase * 0.205 * 1.135);
 c2.closePath();
 touchPaths.push({ id: `C2`, type: "C2", path: c2 });
+async function loadAllImages(onProgress) {
+  const images2 = {};
+  const allKeys = [...baseImageKeys];
+  wifiPrefixes.forEach((prefix) => {
+    for (let i = 0; i < 11; i++) {
+      allKeys.push(prefix + i);
+    }
+  });
+  const total = allKeys.length;
+  let loaded = 0;
+  const report = (key) => {
+    loaded++;
+    if (onProgress) onProgress(loaded / total * 100, key);
+  };
+  const loadQueue = allKeys.map(async (key) => {
+    const url = `${baseURL}${key}.png`;
+    try {
+      try {
+        const img = await getImgWithCache(url, key);
+        if (img) images2[key] = img;
+      } catch (err) {
+        console.warn(`[\u8CC7\u6E90\u7F3A\u5931] \u7121\u6CD5\u8F09\u5165 ${key}:`, err);
+      }
+    } finally {
+      return report(key);
+    }
+  });
+  await Promise.all(loadQueue);
+  return images2;
+}
+async function getImgWithCache(url, key) {
+  let blob = await idbGet(`img_cache_${key}`);
+  if (!blob) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP status ${response.status}`);
+      }
+      blob = await response.blob();
+      await idbSet(`img_cache_${key}`, blob);
+    } catch (e) {
+      console.error(`\u5716\u7247\u8F09\u5165\u5931\u6557: ${url}`, e);
+      throw e;
+    }
+  }
+  if (!blob) {
+    throw new Error(`Blob is null for key: ${key}`);
+  }
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = (err) => reject(new Error(`Failed to decode image blob for key: ${key}`));
+    img.src = URL.createObjectURL(blob);
+  });
+}
+function generatePath(startPos, endPos) {
+  console.warn("path missing, using straight line as fallback");
+  const recorder = new PathRecorder();
+  const startInfo = noteRefPos[startPos - 1];
+  const endInfo = noteRefPos[endPos - 1];
+  recorder.moveTo(startInfo.x, startInfo.y);
+  recorder.lineTo(endInfo.x, endInfo.y);
+  return recorder;
+}
+function tintImage(img, r, g, b, amount = 0.5) {
+  const w = img.width || img.naturalWidth || 0;
+  const h = img.height || img.naturalHeight || 0;
+  if (w === 0 || h === 0) return null;
+  let canvas;
+  if (typeof OffscreenCanvas !== "undefined") {
+    canvas = new OffscreenCanvas(w, h);
+  } else {
+    canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const ctx2 = canvas.getContext("2d");
+  ctx2.drawImage(img, 0, 0, w, h);
+  if (amount <= 0) return canvas;
+  try {
+    let tintCanvas;
+    if (typeof OffscreenCanvas !== "undefined") {
+      tintCanvas = new OffscreenCanvas(w, h);
+    } else {
+      tintCanvas = document.createElement("canvas");
+      tintCanvas.width = w;
+      tintCanvas.height = h;
+    }
+    const tctx = tintCanvas.getContext("2d");
+    tctx.drawImage(img, 0, 0, w, h);
+    tctx.save();
+    tctx.globalCompositeOperation = "source-in";
+    tctx.fillStyle = `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+    tctx.fillRect(0, 0, w, h);
+    tctx.restore();
+    tctx.save();
+    tctx.globalCompositeOperation = "multiply";
+    tctx.drawImage(img, 0, 0, w, h);
+    tctx.restore();
+    tctx.save();
+    tctx.globalCompositeOperation = "destination-in";
+    tctx.drawImage(img, 0, 0, w, h);
+    tctx.restore();
+    ctx2.save();
+    ctx2.globalAlpha = amount;
+    ctx2.drawImage(tintCanvas, 0, 0);
+    ctx2.restore();
+  } catch (e) {
+    console.warn("GPU tint failed: falling back to source-atop method.", e);
+    ctx2.clearRect(0, 0, w, h);
+    ctx2.drawImage(img, 0, 0, w, h);
+    ctx2.save();
+    ctx2.globalCompositeOperation = "source-atop";
+    ctx2.fillStyle = `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+    ctx2.globalAlpha = Math.max(0, Math.min(1, amount));
+    ctx2.fillRect(0, 0, w, h);
+    ctx2.restore();
+  }
+  return canvas;
+}
+var _tintCache = /* @__PURE__ */ new WeakMap();
+function getTintedImage(img, amount = 0.5, { r = 255, g = 255, b = 255, colorCode = null } = {}) {
+  if (!img) return null;
+  if (amount <= 0) return img;
+  let map = _tintCache.get(img);
+  if (!map) {
+    map = /* @__PURE__ */ new Map();
+    _tintCache.set(img, map);
+  }
+  if (colorCode !== null) {
+    let hex = colorCode.replace("#", "");
+    if (hex.length === 3) {
+      hex = hex.split("").map((c) => c + c).join("");
+    }
+    if (/^[0-9A-Fa-f]{6}$/.test(hex)) {
+      r = parseInt(hex.slice(0, 2), 16);
+      g = parseInt(hex.slice(2, 4), 16);
+      b = parseInt(hex.slice(4, 6), 16);
+    } else {
+      console.warn("Invalid tint color code:", colorCode);
+    }
+  }
+  const clampVal = (v) => Math.max(0, Math.min(255, Math.round(v)));
+  r = clampVal(r);
+  g = clampVal(g);
+  b = clampVal(b);
+  const normalizedAmount = Math.round(amount * 20) / 20;
+  const key = `${r}|${g}|${b}|${normalizedAmount}`;
+  if (map.has(key)) return map.get(key);
+  const canvas = tintImage(img, r, g, b, normalizedAmount);
+  map.set(key, canvas);
+  return canvas;
+}
+var wSlideRatio = [
+  111,
+  68,
+  -3,
+  0,
+  160,
+  90,
+  -3.5,
+  -4e-3,
+  204,
+  110,
+  -4.6,
+  -35e-4,
+  253,
+  136,
+  -5.5,
+  -4e-3,
+  298,
+  154,
+  -6.5,
+  -3e-3,
+  353,
+  179,
+  -6.2,
+  -3e-3,
+  410,
+  205,
+  -5.75,
+  -3e-3,
+  464,
+  226,
+  -5.45,
+  -3e-3,
+  519,
+  251,
+  -5.4,
+  -4e-3,
+  571,
+  271,
+  -5.2,
+  -3e-3,
+  653,
+  313,
+  -3.9,
+  -3e-3
+];
 function isObject(val) {
   return val instanceof Object;
+}
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 function updateBackgroundSquare(canvasContainerEl) {
   if (!canvasContainerEl) return;
@@ -10283,6 +10565,200 @@ var activeDebug = () => {
   window.debugInfoEl = debugInfoEl;
 };
 window.activeDebug = activeDebug;
+var SimaiLogicControler = class {
+  constructor() {
+    this._buckets = { slide: [], tapnhold: [], touch: [] };
+    this._visualBuckets = { slide: [], tapnhold: [], touch: [], tags: [] };
+    this._noteQuantity = { slide: 0, tap: 0, hold: 0, touch: 0, break: 0 };
+    this._result = {
+      buckets: this._buckets,
+      playCombo: 0,
+      playScore: 0,
+      visualBuckets: this._visualBuckets,
+      noteQuantity: this._noteQuantity,
+      nowIndex: 0
+    };
+  }
+  get({
+    renderer: renderer2,
+    globalTime,
+    realTime: realTime2,
+    musicDelay,
+    playing: playing2,
+    timeControlSliding,
+    readyBeat,
+    playedClock,
+    settings = {},
+    visualHeight,
+    notes = [],
+    decodedTags,
+    playScoreRes: playScoreRes2,
+    nowIndex,
+    skipAudioQueue = false
+  }) {
+    const V = visualHeight / settings.visualZoom;
+    const effectDecayTime = settings.effectDecayTime;
+    const hanabiEffectDecayTime = settings.hanabiEffectDecayTime;
+    const maxSlideCount = settings.maxSlideCount;
+    const middleDistance = settings.middleDistance;
+    const notesLength = notes.length;
+    if (notesLength > 0 && notes[0] && realTime2 < notes[0].time) {
+      nowIndex = 0;
+    }
+    if (playing2 && readyBeat) {
+      const beatDuration = 240 / clockBpm;
+      for (let i = 0; i < 4; i++) {
+        const clockT = i / 4 * beatDuration - globalTime;
+        if (clockT > 0) {
+          playedClock[i] = false;
+        } else if (!playedClock[i]) {
+          audioManager.queueSoundSingle("clock", clockT);
+          playedClock[i] = true;
+        }
+      }
+    }
+    this._buckets.slide.length = 0;
+    this._buckets.tapnhold.length = 0;
+    this._buckets.touch.length = 0;
+    this._visualBuckets.slide.length = 0;
+    this._visualBuckets.tapnhold.length = 0;
+    this._visualBuckets.touch.length = 0;
+    this._visualBuckets.tags.length = 0;
+    this._noteQuantity.slide = 0;
+    this._noteQuantity.tap = 0;
+    this._noteQuantity.hold = 0;
+    this._noteQuantity.touch = 0;
+    this._noteQuantity.break = 0;
+    const buckets = this._buckets;
+    const visualBuckets = this._visualBuckets;
+    const noteQuantity = this._noteQuantity;
+    let playCombo = 0;
+    let playScore = 0;
+    let slideOnScreenCount = 0;
+    let foundIndexForThisFrame = false;
+    for (let i = notesLength - 1; i >= 0; i--) {
+      const note = notes[i];
+      const noteT = note.time - globalTime;
+      const noteType = note.type;
+      const skipT = (note.holdDuration ?? 0) + (note.slideDuration ?? 0) + (note.slideDelay ?? 0) + (note.isMine ? note.cullSkipExtend ?? 0 : 0);
+      const calcPiecewiseSpeed = (x) => {
+        if (x >= 1) {
+          return x * 0.8833 + 0.8167;
+        } else if (x <= -1) {
+          return x * 0.8833 - 0.8167;
+        } else {
+          return x * 1.7;
+        }
+      };
+      const noteHispeed = note.hispeed ?? 1;
+      const speedCoeff = calcPiecewiseSpeed(settings.speed * noteHispeed);
+      const touchSpeedCoeff = calcPiecewiseSpeed(settings.touchSpeed * noteHispeed);
+      if (!foundIndexForThisFrame && realTime2 >= note.time + musicDelay && noteType !== "slide") {
+        nowIndex = note.index ?? nowIndex;
+        foundIndexForThisFrame = true;
+      }
+      if (noteT < 0) {
+        const shouldCountCombo = noteType === "slide" ? note.lastSlide && skipT + noteT < 0 : noteType === "hold" ? skipT + noteT < 0 : noteType === "touch" && note.holdDuration !== void 0 ? skipT + noteT < 0 : noteType !== "slide";
+        if (shouldCountCombo) {
+          if (note.isBreak) {
+            noteQuantity.break++;
+          } else if (note.isHold) {
+            noteQuantity.hold++;
+          } else {
+            noteQuantity[noteType]++;
+          }
+          playCombo++;
+          playScore += (note.isBreak ? 5 : noteType === "slide" ? 3 : note.holdDuration !== void 0 ? 2 : 1) * playScoreRes2.invScore * 100 + (note.isBreak ? playScoreRes2.breakScore : 0);
+        }
+      }
+      if (!skipAudioQueue) {
+        if (playing2 && !timeControlSliding) {
+          if (noteType === "touch" && note.holdDuration > 0) {
+            const isInsideHold = noteT <= 0 && -noteT < note.holdDuration;
+            const noteId = `riser_${note.pos}_${note.time}`;
+            if (isInsideHold && !note._riserActive) {
+              audioManager.startLongSound(noteId, "touchHold_riser", -noteT);
+              note._riserActive = true;
+            } else if (!isInsideHold && note._riserActive) {
+              audioManager.stopLongSound(noteId);
+              note._riserActive = false;
+            }
+          }
+          const lookAhead = 0.1;
+          const startTargetT = note.time + (note.slideDelay ?? 0);
+          const startNoteT = startTargetT - globalTime;
+          if (startNoteT <= lookAhead && !note._startEffectPlayed) {
+            if (!(noteType === "slide" && !note.firstSlide)) {
+              audioManager.queueSound(note, startTargetT);
+            }
+            note._startEffectPlayed = true;
+          }
+          const endTargetT = note.time + skipT;
+          const endNoteT = endTargetT - globalTime;
+          if (endNoteT <= lookAhead && !note._endEffectPlayed) {
+            const shouldPlayEndSound = noteType === "slide" && note.lastSlide && note.isBreak || note.isHanabi || note.holdDuration !== void 0 && noteType !== "tap" && !settings.notPlayHoldEnd;
+            if (shouldPlayEndSound) {
+              audioManager.queueSound(note, endTargetT);
+            }
+            note._endEffectPlayed = true;
+          }
+        } else {
+          const lookAhead = 0.1;
+          const startTargetT = note.time + (note.slideDelay ?? 0);
+          const endTargetT = note.time + skipT;
+          if (startTargetT - globalTime > lookAhead) {
+            note._startEffectPlayed = false;
+          }
+          if (endTargetT - globalTime > lookAhead) {
+            note._endEffectPlayed = false;
+          }
+          if (note.time - globalTime > 0) {
+            if (note._riserActive) {
+              audioManager.stopLongSound(`riser_${note.pos}_${note.time}`);
+              note._riserActive = false;
+            }
+          }
+        }
+      }
+      const t = 1 - renderer2.timeFunction(noteT * Math.abs(speedCoeff));
+      const touchT = 1 - renderer2.timeFunction(noteT * Math.abs(touchSpeedCoeff));
+      const isVisible = (noteType === "slide" ? t >= middleDistance : noteType === "touch" ? touchT >= -1 : t >= -1) && -noteT <= skipT + (note.isHanabi ? hanabiEffectDecayTime : note.type === "slide" ? 0 : effectDecayTime);
+      const isVisualVisible = noteT >= 0 ? Math.abs(noteT) <= V : -noteT <= V + skipT;
+      if (isVisible) {
+        if (noteType === "slide") {
+          if (slideOnScreenCount < maxSlideCount) {
+            buckets.slide.push(note);
+            slideOnScreenCount++;
+          }
+        } else if (noteType === "hold" || noteType === "tap") {
+          buckets.tapnhold.push(note);
+        } else if (noteType === "touch") {
+          buckets.touch.push(note);
+        }
+      }
+      if (isVisualVisible) {
+        if (noteType === "slide") {
+          visualBuckets.slide.push(note);
+        } else if (noteType === "hold" || noteType === "tap") {
+          visualBuckets.tapnhold.push(note);
+        } else if (noteType === "touch") {
+          visualBuckets.touch.push(note);
+        }
+      }
+    }
+    const tagsLength = decodedTags.length;
+    for (let i = 0; i < tagsLength; i++) {
+      const tag = decodedTags[i];
+      visualBuckets.tags.push(tag);
+      if (Math.abs(tag.time - globalTime) <= V) {
+      }
+    }
+    this._result.playCombo = playCombo;
+    this._result.playScore = playScore;
+    this._result.nowIndex = nowIndex;
+    return this._result;
+  }
+};
 
 // web/Scripts/decode.js
 var warns = [];
@@ -10966,6 +11442,898 @@ function getSlidePath(start, end, type, mid = null) {
   return { path: r, additional, illegal };
 }
 
+// web/Scripts/renderer.js
+var charWidthCache = {};
+function textMonospace(ctx2, text, x, y, cellWidth, mode = "stroke") {
+  ctx2.textAlign = "left";
+  const fontKey = ctx2.font;
+  if (!charWidthCache[fontKey]) {
+    charWidthCache[fontKey] = {};
+  }
+  const cache = charWidthCache[fontKey];
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    let charWidth = cache[char];
+    if (charWidth === void 0) {
+      charWidth = ctx2.measureText(char).width;
+      cache[char] = charWidth;
+    }
+    const offsetX = (cellWidth - charWidth) / 2;
+    if (mode === "stroke") {
+      ctx2.strokeText(char, x + i * cellWidth + offsetX, y);
+    } else {
+      ctx2.fillText(char, x + i * cellWidth + offsetX, y);
+    }
+  }
+}
+function outlineText(ctx2, text, x, y, fontSize, outlinePx = 2, {
+  fillStyle = "#FFFFFF",
+  strokeStyle = "#000000",
+  strokeWidth = outlinePx,
+  fontWeight = "bold",
+  fontFamily = "combo",
+  textAlign = "center",
+  textBaseline = "middle",
+  letterSpacing = "0px",
+  shadowHeight = 0.3,
+  cellWidth = fontSize * 0.8
+} = {}) {
+  cellWidth += letterSpacing ? fontSize * parseFloat(letterSpacing) : 0;
+  cellWidth = Math.max(cellWidth, 0);
+  let calX = x;
+  if (textAlign === "center") {
+    calX = x - text.length * cellWidth / 2;
+  }
+  if (textAlign === "right") {
+    calX = x - text.length * cellWidth;
+  }
+  ctx2.save();
+  ctx2.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+  ctx2.textBaseline = textBaseline;
+  ctx2.fillStyle = fillStyle;
+  ctx2.lineWidth = strokeWidth;
+  if (strokeWidth > 0) {
+    ctx2.strokeStyle = "#000";
+    textMonospace(ctx2, text, calX, y + shadowHeight, cellWidth);
+    ctx2.strokeStyle = strokeStyle;
+    textMonospace(ctx2, text, calX, y, cellWidth);
+  }
+  textMonospace(ctx2, text, calX, y, cellWidth, "fill");
+  ctx2.restore();
+}
+var SimaiRenderer = class {
+  constructor(canvas, settings) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.settings = settings;
+    this.images = null;
+    this.globalTime = 0;
+    this.scale = 0.98;
+    this._tintCache = /* @__PURE__ */ new Map();
+    this.exColor = exColor;
+    this._sensorShapeCache = null;
+    this._sensorTextCache = null;
+    this._sensorCacheParams = { w: 0, h: 0, scale: this.scale };
+    this._staticBackgroundCache = null;
+    this._staticBackgroundCacheParams = { w: 0, h: 0, scale: this.scale };
+    this._middleDisplayCache = null;
+    this._middleDisplayCacheParams = {
+      w: 0,
+      h: 0,
+      scale: this.scale,
+      middleDisplay: null,
+      play_combo: null,
+      play_score: null,
+      backgroundDarkness: null
+    };
+    this._zoneCounts = {};
+    this.drawnBorders = /* @__PURE__ */ new Set();
+    this.hanabiEffect = {};
+    this._tempColorConfig = { colorCode: "" };
+    this._auxTextList = new Array(12);
+    this._middleDisplayConfig1 = { fillStyle: "#A1435D", strokeStyle: "#A6ABAE" };
+    this._middleDisplayConfig2 = { fillStyle: "#A1435D", strokeStyle: "#A6ABAE", letterSpacing: -0.1 };
+    this._middleDisplayConfigScore = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.1, textAlign: "right" };
+    this._middleDisplayConfigDot = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.12, textAlign: "left" };
+    this._middleDisplayConfigFrac = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.12, textAlign: "left" };
+    this._middleDisplayConfigPercent = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.12, textAlign: "left" };
+  }
+  getCanvasWH() {
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const invP = scaleBase / (Math.min(w, h) * this.scale);
+    if (!this._canvasWH) {
+      this._canvasWH = { width: 0, height: 0, halfWidth: 0, halfHeight: 0 };
+    }
+    this._canvasWH.width = w * invP;
+    this._canvasWH.height = h * invP;
+    this._canvasWH.halfWidth = w * invP * 0.5;
+    this._canvasWH.halfHeight = h * invP * 0.5;
+    return this._canvasWH;
+  }
+  /**
+   * 預算座標縮放比例，減少重複計算
+   */
+  updateCanvasMetrics() {
+    const { width: w, height: h } = this.canvas;
+    this._p = Math.min(w, h) / scaleBase * this.scale;
+    this._invP = scaleBase / (Math.min(w, h) * this.scale);
+    this._hw = w * this._invP * 0.5;
+    this._hh = h * this._invP * 0.5;
+  }
+  setImages(images2) {
+    this.images = images2;
+  }
+  /**
+   * 優化染色圖片取得方式
+   */
+  getMemoizedTintedImage(imgKey, opacity, config2) {
+    if (!this.images[imgKey]) return null;
+    const cacheKey = `${imgKey}_${opacity.toFixed(2)}_${config2.colorCode}`;
+    if (this._tintCache.has(cacheKey)) {
+      return this._tintCache.get(cacheKey);
+    }
+    const tinted = getTintedImage(this.images[imgKey], opacity, config2);
+    if (this._tintCache.size > 200) this._tintCache.clear();
+    this._tintCache.set(cacheKey, tinted);
+    return tinted;
+  }
+  setContext(ctx2) {
+    this.canvas = ctx2.canvas;
+    this.ctx = ctx2;
+  }
+  // --- 核心工具函式 ---
+  drawImgAtcenter(img, size2, offsetX = 0, offsetY = 0, imgWidthMul = 1, imgHeightMul = 1) {
+    return drawImgAtcenter(this.ctx, img, size2, offsetX, offsetY, imgWidthMul, imgHeightMul);
+  }
+  timeFunction(x) {
+    return 0.02160482279616 * x * x * x - 0.07553691072 * x * x + 0.43509924 * x + 250029e-9;
+  }
+  touchTimeFunction(x) {
+    if (x > 10.24938) return 1.62102;
+    return 753454e-9 * x * x * x - 0.0298793 * x * x + 0.375038 * x + 0.104685;
+  }
+  // --- 視覺效果 ---
+  simpleHitEffect(noteT) {
+    const t = noteT / this.settings.effectDecayTime;
+    if (t < -1) return;
+    this.ctx.save();
+    const decayAlpha = 1 - Math.max(0, -t);
+    const radius = 0.8 * this.settings.noteBaseSize * (1 - decayAlpha);
+    this.ctx.strokeStyle = `rgba(255, 200, 0, ${0.8 * decayAlpha})`;
+    this.ctx.lineWidth = 0.5 * this.settings.noteBaseSize * decayAlpha;
+    this.ctx.globalCompositeOperation = "lighter";
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    this.ctx.stroke();
+    this.ctx.restore();
+  }
+  simpleHanabi(noteT, isCenter) {
+    const t = noteT / this.settings.hanabiEffectDecayTime;
+    if (t < -1) return;
+    this.ctx.save();
+    const ease = (x) => 1 - Math.pow(1 - x, 2);
+    const decayAlpha = 1 - Math.max(0, -t);
+    const radius = (3 + isCenter * 1) * this.settings.noteBaseSize * ease(1 - decayAlpha);
+    const color = this.ctx.createLinearGradient(-radius, -radius, radius, radius);
+    color.addColorStop(0, "#00D5FF");
+    color.addColorStop(0.4, "#FF00FF");
+    color.addColorStop(0.8, "#FFD823");
+    color.addColorStop(1, "#FFD823");
+    const white = this.ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.3);
+    white.addColorStop(0, "#ffffff00");
+    white.addColorStop(0.4, "#ffffff00");
+    white.addColorStop(0.8, "#ffffff8b");
+    white.addColorStop(1, "#ffffff00");
+    this.ctx.globalAlpha = decayAlpha;
+    this.ctx.globalCompositeOperation = "lighter";
+    this.ctx.fillStyle = white;
+    this.ctx.globalAlpha = decayAlpha * 0.8;
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, radius * 1.3, 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.beginPath();
+    this.ctx.lineWidth = 1.4 * decayAlpha * this.settings.noteBaseSize * (1 - ease(Math.max(0, -t)));
+    this.ctx.strokeStyle = color;
+    this.ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    this.ctx.stroke();
+    this.ctx.fillStyle = color;
+    this.ctx.globalAlpha = decayAlpha * 0.5;
+    this.ctx.fill();
+    this.ctx.restore();
+  }
+  simpleHoldEffect(noteT) {
+    this.ctx.save();
+    const t = noteT * -2;
+    const decayAlpha = 1 - Math.max(0, t % 1);
+    const decayAlpha1 = 1 - Math.max(0, (t + 0.5) % 1);
+    const radius = 0.6 * this.settings.noteBaseSize * (1 - decayAlpha);
+    const radius1 = 0.6 * this.settings.noteBaseSize * (1 - decayAlpha1);
+    this.ctx.strokeStyle = `rgba(255, 200, 0, ${0.6 * decayAlpha})`;
+    this.ctx.lineWidth = 0.5 * this.settings.noteBaseSize * decayAlpha;
+    this.ctx.globalCompositeOperation = "lighter";
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    this.ctx.stroke();
+    this.ctx.strokeStyle = `rgba(255, 200, 0, ${0.6 * decayAlpha1})`;
+    this.ctx.lineWidth = 0.5 * this.settings.noteBaseSize * decayAlpha1;
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, radius1, 0, Math.PI * 2);
+    this.ctx.stroke();
+    this.ctx.restore();
+  }
+  getNoteTransform(noteT, speedMult = 1) {
+    const calcPiecewiseSpeed = (x) => {
+      if (x >= 1) {
+        return x * 0.8833 + 0.8167;
+      } else if (x <= -1) {
+        return x * 0.8833 - 0.8167;
+      } else {
+        return x * 1.7;
+      }
+    };
+    const progress = noteT * calcPiecewiseSpeed(this.settings.speed * speedMult);
+    const t = 1 - this.timeFunction(progress);
+    const displayT = Math.max(this.settings.middleDistance, t);
+    const currentScale = t < this.settings.middleDistance ? Math.max(0, (t + 0.9) / (0.9 + this.settings.middleDistance)) : 1;
+    if (!this._tempTransform) {
+      this._tempTransform = { t: 0, displayT: 0, currentScale: 0 };
+    }
+    this._tempTransform.t = t;
+    this._tempTransform.displayT = displayT;
+    this._tempTransform.currentScale = currentScale;
+    return this._tempTransform;
+  }
+  // --- 渲染流程 ---
+  drawFrame(state) {
+    const { ctx: ctx2 } = this;
+    const {
+      globalTime,
+      buckets,
+      dt,
+      showSensor,
+      showSensorText,
+      playCombo,
+      playScore,
+      noteQuantity = {
+        tap: 0,
+        hold: 0,
+        slide: 0,
+        touch: 0,
+        break: 0
+      },
+      playScoreRes: playScoreRes2 = {
+        tap: 0,
+        hold: 0,
+        slide: 0,
+        touch: 0,
+        break: 0,
+        score: 0,
+        breakScore: 0,
+        invScore: 0
+      },
+      nowIndex
+    } = state;
+    this.globalTime = globalTime;
+    this.playCombo = playCombo;
+    this.playScore = playScore;
+    if (!this.images) return;
+    this.currentTouchNotes = buckets.touch || [];
+    for (const k in this._zoneCounts) {
+      this._zoneCounts[k] = 0;
+    }
+    for (let idx = 0; idx < this.currentTouchNotes.length; idx++) {
+      const n = this.currentTouchNotes[idx];
+      const t = n.time - this.globalTime;
+      const isActive = n.holdDuration ? -t <= n.holdDuration : t > 0;
+      if (isActive) {
+        const zoneKey = n.touchPos + n.pos;
+        this._zoneCounts[zoneKey] = (this._zoneCounts[zoneKey] || 0) + 1;
+      }
+    }
+    this.drawnBorders.clear();
+    for (const k in this.hanabiEffect) {
+      this.hanabiEffect[k].cleared = true;
+      this.hanabiEffect[k].time = -99999;
+    }
+    this.updateCanvasMetrics();
+    const { _hw: hw, _hh: hh, canvas: { width: w, height: h } } = this;
+    if (!state.skipClear) {
+      ctx2.clearRect(-hw, -hh, w, h);
+    }
+    if (showSensor || showSensorText) this.drawSensors(showSensor, showSensorText);
+    this.drawMiddleDisplay();
+    for (const n of buckets.touch) this.getTouchHanabi(n);
+    this.drawHanabiEffects();
+    for (const n of buckets.slide) this.drawSlide(n);
+    for (const n of buckets.tapnhold) {
+      if (n.type === "hold") this.drawHold(n);
+      else if (n.isStar) this.drawStar(n);
+      else this.drawTap(n);
+    }
+    for (const n of buckets.touch) this.drawTouch(n);
+    this.drawStaticBackground();
+    if (this.settings.renderSurroundingAuxiliaryText) this.drawAuxiliaryText(dt, globalTime, noteQuantity, playScoreRes2, playCombo, playScore);
+    if (this.settings.showUI) this.drawUI(dt, globalTime);
+  }
+  drawUI(dt, globalTime) {
+    const { ctx: ctx2 } = this;
+    const { width: w, height: h } = this.getCanvasWH();
+    const fpsText = `FPS: ${dt === 0 ? "PAUSE" : (1 / dt).toFixed(2)}`;
+    const timeText = `Time: ${globalTime < 0 ? "-" + Math.abs(Math.ceil(globalTime / 60)) : Math.floor(globalTime / 60)}:${Math.abs(globalTime % 60).toFixed(2).padStart(5, "0")}`;
+    ctx2.save();
+    ctx2.font = "3px Google Sans";
+    ctx2.fillStyle = "rgba(255, 255, 255, 0.8)";
+    ctx2.textAlign = "left";
+    ctx2.textBaseline = "top";
+    ctx2.fillText(fpsText, -w / 2 + 2, -h / 2 + 2);
+    ctx2.fillText(timeText, -w / 2 + 2, -h / 2 + 2 + 4);
+    ctx2.restore();
+  }
+  drawAuxiliaryText(dt, globalTime, noteQuantity, playScoreRes2, playCombo, playScore) {
+    const { width: w, height: h } = this.getCanvasWH();
+    if (h >= w) return;
+    const { ctx: ctx2 } = this;
+    const allRes = playScoreRes2.tap + playScoreRes2.hold + playScoreRes2.slide + playScoreRes2.touch + playScoreRes2.break;
+    ctx2.save();
+    ctx2.fillStyle = "white";
+    ctx2.textAlign = "right";
+    ctx2.textBaseline = "bottom";
+    ctx2.font = "9px mono";
+    ctx2.letterSpacing = "-1px";
+    ctx2.fillText(
+      `${globalTime < 0 ? "-" + Math.abs(Math.ceil(globalTime / 60)) : Math.floor(globalTime / 60)}:${Math.abs(globalTime % 60).toFixed(2).padStart(5, "0")}`,
+      scaleBase / -2 - 5,
+      -1
+    );
+    ctx2.letterSpacing = "0px";
+    ctx2.font = "4px Google Sans";
+    ctx2.fillText("Powered by", scaleBase / -2 - 3, h / 2 - 5);
+    ctx2.font = "2.5px Google Sans";
+    ctx2.fillText("susuy0725/web-mai-chart-x", scaleBase / -2 - 3, h / 2 - 2);
+    ctx2.textAlign = "left";
+    this._auxTextList[0] = `${playCombo}/${allRes}`;
+    this._auxTextList[1] = `ALL:`;
+    this._auxTextList[2] = `${noteQuantity.break}/${playScoreRes2.break}`;
+    this._auxTextList[3] = `BRK:`;
+    this._auxTextList[4] = `${noteQuantity.touch}/${playScoreRes2.touch}`;
+    this._auxTextList[5] = `TOH:`;
+    this._auxTextList[6] = `${noteQuantity.slide}/${playScoreRes2.slide}`;
+    this._auxTextList[7] = `SLD:`;
+    this._auxTextList[8] = `${noteQuantity.hold}/${playScoreRes2.hold}`;
+    this._auxTextList[9] = `HOD:`;
+    this._auxTextList[10] = `${noteQuantity.tap}/${playScoreRes2.tap}`;
+    this._auxTextList[11] = `TAP:`;
+    const sp = 6;
+    const lil = (this._auxTextList.length * sp - Math.floor(this._auxTextList.length / 2)) / 2 + sp;
+    for (let i = 0; i < this._auxTextList.length; i++) {
+      const v = this._auxTextList[i];
+      ctx2.font = `${i % 2 == 0 ? "4" : "bold 5"}px mono`;
+      ctx2.fillText(v, scaleBase / 2 + 3, lil - i * sp - (i % 2 == 0));
+    }
+    ctx2.textBaseline = "top";
+    ctx2.textAlign = "right";
+    ctx2.font = "bold 5px mono";
+    ctx2.fillText("DELUXE Rate:", scaleBase / -2 - 3, 1);
+    ctx2.font = "7px mono";
+    ctx2.fillText(playScore.toFixed(4) + "%", scaleBase / -2 - 3, 8);
+    ctx2.restore();
+  }
+  ensureStaticBackgroundCache() {
+    const wPx = this.canvas.width;
+    const hPx = this.canvas.height;
+    const scale2 = this.scale;
+    if (!wPx || !hPx) return;
+    const params2 = this._staticBackgroundCacheParams;
+    if (this._staticBackgroundCache && params2.w === wPx && params2.h === hPx && params2.scale === scale2) {
+      return;
+    }
+    const cache = document.createElement("canvas");
+    cache.width = wPx;
+    cache.height = hPx;
+    const cctx = cache.getContext("2d");
+    const p = Math.min(wPx, hPx) / scaleBase * scale2;
+    cctx.setTransform(p, 0, 0, p, wPx / 2, hPx / 2);
+    cctx.save();
+    cctx.beginPath();
+    cctx.rect(-wPx, -hPx, wPx * 2, hPx * 2);
+    cctx.arc(0, 0, scaleBase / 2, 0, Math.PI * 2);
+    cctx.fill("evenodd");
+    cctx.restore();
+    this._staticBackgroundCache = cache;
+    this._staticBackgroundCacheParams = { w: wPx, h: hPx, scale: scale2 };
+  }
+  drawStaticBackground() {
+    this.ensureStaticBackgroundCache();
+    if (!this._staticBackgroundCache) return;
+    const { ctx: ctx2 } = this;
+    ctx2.save();
+    ctx2.setTransform(1, 0, 0, 1, 0, 0);
+    ctx2.drawImage(this._staticBackgroundCache, 0, 0);
+    ctx2.restore();
+  }
+  drawMiddleDisplay() {
+    this.renderMiddleDisplayToContext(this.ctx);
+  }
+  renderMiddleDisplayToContext(ctx2) {
+    ctx2.save();
+    switch (this.settings.middleDisplay) {
+      case 1:
+        if (this.playCombo != 0) {
+          outlineText(ctx2, "COMBO", 0, -7, 4.4, 0.5, this._middleDisplayConfig1);
+          outlineText(ctx2, `${this.playCombo}`, 0, 0, 7.4, 0.5, this._middleDisplayConfig2);
+        }
+        break;
+      case 2:
+        const trueScore = Math.max(this.playScore, 0).toFixed(4);
+        const dotIdx = trueScore.indexOf(".");
+        const part0 = dotIdx === -1 ? trueScore : trueScore.substring(0, dotIdx);
+        const part1 = dotIdx === -1 ? "" : trueScore.substring(dotIdx + 1);
+        let scoreColor = "#4061A8";
+        if (trueScore > 80) {
+          scoreColor = "#9E3D2E";
+        }
+        if (trueScore > 100) {
+          scoreColor = "#99853A";
+        }
+        this._middleDisplayConfigScore.fillStyle = scoreColor;
+        this._middleDisplayConfigDot.fillStyle = scoreColor;
+        this._middleDisplayConfigFrac.fillStyle = scoreColor;
+        this._middleDisplayConfigPercent.fillStyle = scoreColor;
+        outlineText(ctx2, part0, -1.8, 0, 7.4, 0.5, this._middleDisplayConfigScore);
+        outlineText(ctx2, ".", -2.3, 0.6, 5, 0.5, this._middleDisplayConfigDot);
+        outlineText(ctx2, part1, 0, 0.5, 5, 0.5, this._middleDisplayConfigFrac);
+        outlineText(ctx2, "%", 14.4, 1.2, 3, 0.5, this._middleDisplayConfigPercent);
+        break;
+      default:
+        break;
+    }
+    ctx2.restore();
+  }
+  // 建立或確認靜態快取（在畫布尺寸或 scale 變動時會重建）
+  ensureSensorCaches() {
+    const wPx = this.canvas.width;
+    const hPx = this.canvas.height;
+    const scale2 = this.scale;
+    if (!wPx || !hPx) return;
+    const p = Math.min(wPx, hPx) / scaleBase * scale2;
+    const params2 = this._sensorCacheParams || {};
+    if (this._sensorShapeCache && params2.w === wPx && params2.h === hPx && params2.scale === scale2) {
+      return;
+    }
+    try {
+      const shapes = document.createElement("canvas");
+      shapes.width = wPx;
+      shapes.height = hPx;
+      const sctx = shapes.getContext("2d");
+      sctx.setTransform(p, 0, 0, p, wPx / 2, hPx / 2);
+      sctx.save();
+      sctx.beginPath();
+      sctx.arc(0, 0, innerCirleBase, 0, Math.PI * 2);
+      sctx.closePath();
+      sctx.clip();
+      sctx.fillStyle = "#80808025";
+      sctx.strokeStyle = "#ffffff80";
+      touchPaths.forEach((shape) => {
+        if (shape.type === "D" || shape.type === "C1" || shape.type === "C2") return;
+        sctx.lineWidth = 0.3;
+        if (shape.type === "A") {
+          sctx.lineWidth = 0.3;
+          sctx.setLineDash([0.2, 0.6]);
+          sctx.stroke(shape.path);
+        } else {
+          sctx.setLineDash([]);
+          sctx.fill(shape.path);
+          sctx.stroke(shape.path);
+        }
+      });
+      sctx.restore();
+      const texts = document.createElement("canvas");
+      texts.width = wPx;
+      texts.height = hPx;
+      const tctx = texts.getContext("2d");
+      tctx.setTransform(p, 0, 0, p, wPx / 2, hPx / 2);
+      tctx.save();
+      tctx.fillStyle = "#ffffff30";
+      tctx.textAlign = "center";
+      tctx.textBaseline = "middle";
+      ["A", "B", "D", "E"].forEach((type) => {
+        const positions = touchRefPos[type];
+        if (type === "A") {
+          tctx.font = "bold 5px combo";
+        } else {
+          tctx.font = "4px combo";
+        }
+        for (let i = 0; i < positions.length; i++) {
+          const pos = positions[i];
+          tctx.fillText(`${type}${i + 1}`, pos.x, pos.y);
+        }
+      });
+      tctx.fillText("C", 0, 0);
+      tctx.restore();
+      this._sensorShapeCache = shapes;
+      this._sensorTextCache = texts;
+      this._sensorCacheParams = { w: wPx, h: hPx, scale: scale2 };
+    } catch (e) {
+      console.error("\u5EFA\u7ACB\u50B3\u611F\u5668\u975C\u614B\u5FEB\u53D6\u5931\u6557:", e);
+      this._sensorShapeCache = null;
+      this._sensorTextCache = null;
+      this._sensorCacheParams = { w: 0, h: 0, scale: scale2 };
+    }
+  }
+  // 使用靜態快取繪製傳感器（會依 flag 決定畫 shapes / text）
+  drawSensors(showSensor, showSensorText) {
+    this.ensureSensorCaches();
+    if (!this._sensorShapeCache && !this._sensorTextCache) return;
+    const { ctx: ctx2 } = this;
+    ctx2.save();
+    ctx2.setTransform(1, 0, 0, 1, 0, 0);
+    try {
+      if (showSensor && this._sensorShapeCache) ctx2.drawImage(this._sensorShapeCache, 0, 0);
+      if (showSensorText && this._sensorTextCache) ctx2.drawImage(this._sensorTextCache, 0, 0);
+    } finally {
+      ctx2.restore();
+    }
+  }
+  drawTap(s) {
+    const { time: noteTime, pos, isBreak, isDouble, isMine, hispeed } = s;
+    const noteT = noteTime - this.globalTime;
+    const { t, displayT, currentScale } = this.getNoteTransform(noteT, hispeed);
+    const posInfo = noteRefPos[pos - 1];
+    const ctx2 = this.ctx;
+    if (noteT <= 0) {
+      ctx2.save();
+      ctx2.translate(posInfo.x, posInfo.y);
+      this.simpleHitEffect(noteT);
+      ctx2.restore();
+      return;
+    }
+    const br = isBreak && !isMine ? Math.pow(Math.sin(this.globalTime * -6), 2) * 0.5 : 0;
+    const imgKey = isMine ? "tap_mine" : isBreak ? "tap_break" : isDouble ? "tap_each" : "tap";
+    let img;
+    if (isBreak) {
+      this._tempColorConfig.colorCode = "#fff8a6";
+      img = this.getMemoizedTintedImage(imgKey, br, this._tempColorConfig);
+    } else {
+      img = this.images[imgKey];
+    }
+    const size2 = this.settings.noteBaseSize * currentScale;
+    ctx2.save();
+    const arcimg = this.images[isMine ? "MineArc" : isBreak ? "BreakArc" : isDouble ? "EachArc" : "NormalArc"];
+    ctx2.save();
+    ctx2.rotate(posInfo.rot);
+    ctx2.globalAlpha = currentScale;
+    this.drawImgAtcenter(arcimg, displayT * innerCirleBase * 2.25);
+    ctx2.restore();
+    ctx2.translate(posInfo.x * displayT, posInfo.y * displayT);
+    ctx2.rotate(posInfo.rot);
+    this.drawImgAtcenter(img, size2);
+    if (s.isEx) {
+      this._tempColorConfig.colorCode = this.exColor[isBreak ? "break" : isDouble ? "double" : "tap"];
+      const exImg = this.getMemoizedTintedImage("tap_ex", 0.6, this._tempColorConfig);
+      this.drawImgAtcenter(exImg, size2);
+    }
+    ctx2.restore();
+  }
+  drawStar(s) {
+    const { time: noteTime, pos, isBreak, isDouble, isMultiple, isMine, hispeed } = s;
+    const noteT = noteTime - this.globalTime;
+    const { t, displayT, currentScale } = this.getNoteTransform(noteT, hispeed);
+    const posInfo = noteRefPos[pos - 1];
+    const ctx2 = this.ctx;
+    if (noteT <= 0) {
+      ctx2.save();
+      ctx2.translate(posInfo.x, posInfo.y);
+      this.simpleHitEffect(noteT);
+      ctx2.restore();
+      return;
+    }
+    const br = isBreak && !isMine ? Math.pow(Math.sin(this.globalTime * -6), 2) * 0.5 : 0;
+    const imgKey = isMultiple ? isMine ? "star_mine_double" : isBreak ? "star_break_double" : isDouble ? "star_each_double" : this.settings.pinkStars ? "star_pink_double" : "star_double" : isMine ? "star_mine" : isBreak ? "star_break" : isDouble ? "star_each" : this.settings.pinkStars ? "star_pink" : "star";
+    let img;
+    if (isBreak) {
+      this._tempColorConfig.colorCode = "#fff8a6";
+      img = this.getMemoizedTintedImage(imgKey, br, this._tempColorConfig);
+    } else {
+      img = this.images[imgKey];
+    }
+    const size2 = this.settings.noteBaseSize * currentScale;
+    ctx2.save();
+    const arcimg = this.images[isMine ? "MineArc" : isBreak ? "BreakArc" : isDouble ? "EachArc" : "SlideArc"];
+    ctx2.save();
+    ctx2.rotate(posInfo.rot);
+    ctx2.globalAlpha = currentScale;
+    this.drawImgAtcenter(arcimg, displayT * innerCirleBase * 2.25);
+    ctx2.restore();
+    ctx2.translate(posInfo.x * displayT, posInfo.y * displayT);
+    let rot = posInfo.rot;
+    if (this.settings.rotateStars) {
+      let speed2 = 0;
+      if (s.slideDuration && s.slideDuration > 0) {
+        speed2 = clamp(1.5 / s.slideDuration, 0.5, 6);
+      }
+      rot += this.globalTime * 2 * Math.PI * speed2;
+    }
+    ctx2.rotate(rot);
+    this.drawImgAtcenter(img, size2);
+    if (s.isEx) {
+      this._tempColorConfig.colorCode = this.exColor[isBreak ? "break" : isDouble ? "double" : "star"];
+      const exImg = this.getMemoizedTintedImage(isMultiple ? "star_ex_double" : "star_ex", 0.6, this._tempColorConfig);
+      this.drawImgAtcenter(exImg, size2);
+    }
+    ctx2.restore();
+  }
+  drawHold(s) {
+    const { time: noteTime, pos, isBreak, isDouble, isMine, holdDuration, hispeed } = s;
+    const noteT = noteTime - this.globalTime;
+    const t = 1 - this.timeFunction(noteT * (this.settings.speed * 0.8833 + 0.8167) * hispeed);
+    const posInfo = noteRefPos[pos - 1];
+    if (-noteT > holdDuration) {
+      this.ctx.save();
+      this.ctx.translate(posInfo.x, posInfo.y);
+      this.simpleHitEffect(holdDuration + noteT);
+      this.ctx.restore();
+    } else {
+      const isOn = noteTime - this.globalTime <= -0.1 && !isMine;
+      let br = s.isBreak && !isMine ? Math.pow(Math.sin(this.globalTime * -6), 2) * 0.5 : 0;
+      const holdImgKey = isOn ? isMine ? "hold_mine" : isBreak ? "hold_break_on" : isDouble ? "hold_each_on" : "hold_on" : isMine ? "hold_mine" : isBreak ? "hold_break" : isDouble ? "hold_each" : "hold";
+      let img;
+      if (isBreak) {
+        this._tempColorConfig.colorCode = "#fff8a6";
+        img = this.getMemoizedTintedImage(holdImgKey, br, this._tempColorConfig);
+      } else {
+        img = this.images[holdImgKey];
+      }
+      const t1 = 1 - this.timeFunction((noteTime - this.globalTime + holdDuration) * (this.settings.speed * 0.8833 + 0.8167));
+      const displayT = Math.min(1, Math.max(this.settings.middleDistance, t));
+      const currentScale = t < this.settings.middleDistance ? Math.max(0, (t + 0.9) / (0.9 + this.settings.middleDistance)) : 1;
+      const size2 = this.settings.noteBaseSize * currentScale;
+      const sizeOffset = t < this.settings.middleDistance ? 0 : Math.min(
+        (holdDuration + noteT) * 0.9 * (this.settings.speed * 0.8833 + 0.8167),
+        Math.min(
+          (1 - this.settings.middleDistance) * 2.45,
+          Math.min(
+            (t - this.settings.middleDistance) * 2.45,
+            holdDuration * 0.9 * (this.settings.speed * 0.8833 + 0.8167)
+          )
+        )
+      );
+      this.ctx.save();
+      const arcimg = this.images[isMine ? "MineArc" : isBreak ? "BreakArc" : isDouble ? "EachArc" : "NormalArc"];
+      this.ctx.rotate(posInfo.rot);
+      this.ctx.globalAlpha = currentScale;
+      this.drawImgAtcenter(arcimg, displayT * innerCirleBase * 2.25);
+      this.ctx.restore();
+      if (t1 > this.settings.middleDistance) {
+        this.ctx.save();
+        const endimg = this.images[isMine ? "Hold_Mine_End" : isBreak ? "Hold_Break_End" : isDouble ? "Hold_Each_End" : "Hold_End"];
+        this.ctx.translate(posInfo.x * t1, posInfo.y * t1);
+        this.drawImgAtcenter(endimg, size2 * 0.65);
+        this.ctx.restore();
+      }
+      this.ctx.save();
+      this.ctx.translate(posInfo.x * displayT, posInfo.y * displayT);
+      this.ctx.rotate(posInfo.rot);
+      this.ctx.drawImage(img, 0, 0, 122, 55, -size2 / 2, -size2 * 1.64 * 0.35, size2, size2 * 1.64 * 0.275);
+      this.ctx.drawImage(img, 0, 55, 122, 90, -size2 / 2, -size2 * 1.64 * 0.0785, size2, size2 * 1.64 * (0.17 + sizeOffset));
+      this.ctx.drawImage(img, 0, 145, 122, 55, -size2 / 2, size2 * 1.64 * (0.09 + sizeOffset), size2, size2 * 1.64 * 0.275);
+      if (s.isEx) {
+        this._tempColorConfig.colorCode = isBreak ? this.exColor.break : isDouble ? this.exColor.double : this.exColor.tap;
+        const ex = this.getMemoizedTintedImage("hold_ex", 0.6, this._tempColorConfig);
+        this.ctx.drawImage(ex, 0, 0, 122, 55, -size2 / 2, -size2 * 1.64 * 0.35, size2, size2 * 1.64 * 0.275);
+        this.ctx.drawImage(ex, 0, 55, 122, 90, -size2 / 2, -size2 * 1.64 * 0.0785, size2, size2 * 1.64 * (0.17 + sizeOffset));
+        this.ctx.drawImage(ex, 0, 145, 122, 55, -size2 / 2, size2 * 1.64 * (0.09 + sizeOffset), size2, size2 * 1.64 * 0.275);
+      }
+      this.ctx.restore();
+      this.ctx.save();
+      this.ctx.translate(posInfo.x * displayT, posInfo.y * displayT);
+      this.simpleHitEffect(noteT);
+      if (isOn) this.simpleHoldEffect(noteT);
+      this.ctx.restore();
+    }
+  }
+  getTouchHanabi(s) {
+    const { time: noteTime, pos, touchPos, holdDuration } = s;
+    const noteT = noteTime - this.globalTime;
+    if (noteT > 0) return;
+    const key = touchPos + pos;
+    let existing = this.hanabiEffect[key];
+    if (!existing) {
+      existing = { time: -99999, x: 0, y: 0, noteT: 0, isCenter: false, cleared: true };
+      this.hanabiEffect[key] = existing;
+    }
+    if (existing.cleared === false && existing.time > noteTime) {
+      return;
+    }
+    const posInfo = touchRefPos[touchPos][touchPos === "C" ? 0 : pos - 1];
+    if (holdDuration) {
+      if (s.isHanabi) {
+        const effT = holdDuration + noteT;
+        existing.time = noteTime;
+        existing.x = posInfo.x;
+        existing.y = posInfo.y;
+        existing.noteT = existing.cleared === false ? Math.max(existing.noteT, effT) : effT;
+        existing.isCenter = touchPos === "C";
+        existing.cleared = false;
+      } else {
+        existing.time = noteTime;
+        existing.cleared = true;
+      }
+      return;
+    }
+    if (s.isHanabi) {
+      existing.time = noteTime;
+      existing.x = posInfo.x;
+      existing.y = posInfo.y;
+      existing.noteT = existing.cleared === false ? Math.max(existing.noteT, noteT) : noteT;
+      existing.isCenter = touchPos === "C";
+      existing.cleared = false;
+    } else {
+      existing.time = noteTime;
+      existing.cleared = true;
+    }
+  }
+  drawTouch(s) {
+    const { time: noteTime, pos, touchPos, isDouble, isMine, holdDuration, hispeed } = s;
+    const zoneKey = touchPos + pos;
+    const count = this._zoneCounts[zoneKey] || 0;
+    const noteT = noteTime - this.globalTime;
+    const t = 1 - this.timeFunction(noteT * (this.settings.touchSpeed * 0.8833 + 0.8167) * hispeed);
+    const posInfo = touchRefPos[touchPos][touchPos === "C" ? 0 : pos - 1];
+    const borderImg = this.images[isMine ? "touch_border_2_mine" : isDouble ? "touch_border_2_each" : "touch_border_2"];
+    const borderImg3 = this.images[isMine ? "touch_border_3_mine" : isDouble ? "touch_border_3_each" : "touch_border_3"];
+    const touchPoint = this.images[isMine ? "touch_point_mine" : isDouble ? "touch_point_each" : "touch_point"];
+    if (holdDuration) {
+      const isOn = noteTime - this.globalTime <= -0.1;
+      const imgs = [];
+      for (let i = 0; i < 4; i++) {
+        const img2 = this.images["touchhold_" + i + (isMine ? "_mine" : "")];
+        imgs.push(img2);
+      }
+      const touchBorder = this.images["touchhold_border" + (isMine ? "_mine" : "")];
+      this.ctx.save();
+      if (-noteT > holdDuration) {
+        this.ctx.translate(posInfo.x, posInfo.y);
+        this.simpleHitEffect(holdDuration + noteT);
+      } else {
+        const size2 = this.settings.noteBaseSize * 0.7;
+        const holdP = Math.max(0, Math.min(1, -noteT / holdDuration));
+        const a = this.touchTimeFunction(18 * (1 - Math.min(1, t)) / 1.5) * 1.6;
+        this.ctx.translate(posInfo.x, posInfo.y);
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, 0);
+        this.ctx.arc(0, 0, size2 * 1.3, -Math.PI * 0.5, Math.PI * holdP * 2 - Math.PI * 0.5);
+        this.ctx.closePath();
+        this.ctx.clip();
+        this.drawImgAtcenter(touchBorder, size2 * 2.6);
+        this.ctx.restore();
+        this.ctx.globalAlpha = 1;
+        this.ctx.rotate(Math.PI * -0.75);
+        this.ctx.globalAlpha = Math.max(0, 1 - (1 - Math.min(1, t)) * 0.5);
+        for (let i = 0; i < 4; i++) {
+          this.ctx.drawImage(imgs[i], -size2 * 1.365 * 0.5, size2 * 0.15 * (a - 1.5), size2 * 1.365, size2);
+          this.ctx.rotate(Math.PI / 2);
+        }
+        this.ctx.globalAlpha = 1;
+        this.drawImgAtcenter(touchPoint, size2 * 0.4);
+        this.simpleHitEffect(noteT);
+        if (isOn) this.simpleHoldEffect(noteT);
+      }
+      this.ctx.restore();
+      return;
+    }
+    const img = this.images[isMine ? "touch_mine" : isDouble ? "touch_each" : "touch"];
+    this.ctx.save();
+    if (noteT <= 0) {
+      this.ctx.translate(posInfo.x, posInfo.y);
+      this.simpleHitEffect(noteT);
+    } else {
+      const size2 = this.settings.noteBaseSize * 0.7;
+      const a = this.touchTimeFunction(18 * (1 - t) / 1.5) * 1.6;
+      this.ctx.translate(posInfo.x, posInfo.y);
+      this.ctx.globalAlpha = 1;
+      if (count >= 2 && !this.drawnBorders.has(zoneKey)) {
+        this.drawnBorders.add(zoneKey);
+        this.drawImgAtcenter(borderImg, size2 * 2.65);
+        if (count > 2)
+          this.drawImgAtcenter(borderImg3, size2 * 2.65);
+      }
+      this.ctx.globalAlpha = Math.max(0, 1 - (1 - t) * 0.5);
+      for (let i = 0; i < 4; i++) {
+        this.ctx.drawImage(img, -size2 * 1.365 * 0.5, size2 * 0.15 * (a - 1.5), size2 * 1.365, size2);
+        this.ctx.rotate(Math.PI / 2);
+      }
+      this.ctx.globalAlpha = 1;
+      this.drawImgAtcenter(touchPoint, size2 * 0.4);
+    }
+    this.ctx.restore();
+  }
+  drawSlide(s) {
+    const prefix = s.isIllegal && this.settings.slideIllegalRed ? "wifi_" : s.isMine ? "wifi_mine_" : s.isBreak ? "wifi_break_" : s.isDouble ? "wifi_each_" : "wifi_";
+    const standardKey = s.isIllegal && this.settings.slideIllegalRed ? "slide" : s.isMine ? "slide_mine" : s.isBreak ? "slide_break" : s.isDouble ? "slide_each" : "slide";
+    const { time: noteTime, pos, slideEnd, slideDelay, slideDuration, path, wPaths, hispeed } = s;
+    const noteT = noteTime - this.globalTime;
+    const t = 1 - this.timeFunction(noteT * (this.settings.speed * 0.8833 + 0.8167) * hispeed);
+    const p = path || generatePath(pos, slideEnd);
+    if (p.totalLength < 1e-4) return;
+    this.ctx.save();
+    const isTaped = -noteT > 0;
+    this.ctx.globalAlpha = isTaped ? 1 : 0.75 * clamp((t - this.settings.middleDistance) / (1 - this.settings.middleDistance) + this.settings.slideSpeed, 0, 1);
+    let slideProgress = 0;
+    if (-noteT > slideDelay) {
+      slideProgress = Math.min(1, (-noteT - slideDelay) / slideDuration);
+    }
+    let br = s.isBreak && !s.isMine && !(s.isIllegal && this.settings.slideIllegalRed) ? Math.pow(Math.sin(this.globalTime * -6), 2) * 0.5 : 0;
+    const prefixOrKey = s.slideType === "w" ? prefix : standardKey;
+    this.drawPathWithArrows(p, s.isMine ? 0 : slideProgress, prefixOrKey, s.slideType === "w", br, s.isIllegal && this.settings.slideIllegalRed);
+    const sz = Math.min(1, 1 - (noteT + slideDelay) / slideDelay);
+    if (noteT <= 0 && slideProgress < 1 && (!s.hideHead || sz >= 1)) {
+      const { x, y, rot } = p.getPointAt(slideProgress);
+      this.ctx.save();
+      this.ctx.globalAlpha = slideDelay < 1e-4 ? 1 : sz;
+      const starImg = this.images[s.isMine ? "star_mine" : s.isBreak ? "star_break" : s.isDouble ? "star_each" : "star"];
+      const baseTransform = this.ctx.getTransform();
+      if (s.slideType === "w") {
+        const w1Point = wPaths.w1.getPointAt(slideProgress);
+        this.ctx.translate(w1Point.x, w1Point.y);
+        this.ctx.rotate(w1Point.rot + Math.PI * 0.5);
+        this.drawImgAtcenter(starImg, this.settings.noteBaseSize * sz * 1.45);
+        this.ctx.setTransform(baseTransform);
+        const w2Point = wPaths.w2.getPointAt(slideProgress);
+        this.ctx.translate(w2Point.x, w2Point.y);
+        this.ctx.rotate(w2Point.rot + Math.PI * 0.5);
+        this.drawImgAtcenter(starImg, this.settings.noteBaseSize * sz * 1.45);
+        this.ctx.setTransform(baseTransform);
+      }
+      this.ctx.translate(x, y);
+      this.ctx.rotate(rot + Math.PI * 0.5);
+      this.drawImgAtcenter(starImg, this.settings.noteBaseSize * sz * 1.45);
+      this.ctx.restore();
+    }
+    this.ctx.restore();
+  }
+  drawPathWithArrows(recorder, starProgress, prefixOrKey, typew, br, isIllegal, spacing = 4.36) {
+    const arrowCount = typew ? 11 : Math.floor((recorder.totalLength - 2) / spacing);
+    spacing = typew ? 7 : spacing;
+    this.ctx.save();
+    for (let i = arrowCount; i > Math.floor(starProgress * arrowCount); i--) {
+      const imgIndex = Math.min(i - 1, typew ? 10 : 0);
+      const imgKey = typew ? prefixOrKey + imgIndex : prefixOrKey;
+      const opacity = isIllegal ? 1 : br;
+      const colorCode = isIllegal ? "#ff3838" : "#fff8a6";
+      let img;
+      if (isIllegal || br > 0) {
+        this._tempColorConfig.colorCode = colorCode;
+        img = this.getMemoizedTintedImage(imgKey, opacity, this._tempColorConfig);
+      } else {
+        img = this.images[imgKey];
+      }
+      if (!img) continue;
+      const dist = i * spacing + (typew ? wSlideRatio[imgIndex * 4 + 2] : 0);
+      const { x, y, rot } = recorder.getPointAt(dist / recorder.totalLength);
+      this.ctx.save();
+      this.ctx.translate(x, y);
+      this.ctx.rotate(rot + (typew ? Math.PI * -0.3745 : Math.PI));
+      const dw = typew ? wSlideRatio[imgIndex * 4] * (0.096 + wSlideRatio[imgIndex * 4 + 3]) : 7 * 0.9;
+      const dh = typew ? wSlideRatio[imgIndex * 4 + 1] * (0.096 + wSlideRatio[imgIndex * 4 + 3]) : 9.4 * 0.9;
+      this.drawImgAtcenter(img, 1, 0, 0, dw, dh);
+      this.ctx.restore();
+    }
+    this.ctx.restore();
+  }
+  drawHanabiEffects() {
+    for (const key in this.hanabiEffect) {
+      const eff = this.hanabiEffect[key];
+      if (eff.cleared) continue;
+      this.ctx.save();
+      this.ctx.translate(eff.x, eff.y);
+      this.simpleHanabi(eff.noteT, eff.isCenter);
+      this.ctx.restore();
+    }
+  }
+};
+
 // activity/main.js
 var $ = (id) => document.getElementById(id);
 var css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -10983,8 +12351,6 @@ var rA = $("rangeA");
 var rB = $("rangeB");
 var params = new URLSearchParams(window.location.search);
 var clientId = params.get("client_id") || "1527644569133649960";
-var angleOf = (p) => ((p - 0.5) * 45 - 90) * Math.PI / 180;
-var touchR = { A: 0.76, B: 0.45, C: 0, D: 0.76, E: 0.76 };
 window.onerror = function(message, source, lineno, colno, error) {
   statusEl.textContent = `JS \u932F\u8AA4\uFF1A${message} (L${lineno})`;
   statusEl.className = "status status-error";
@@ -11007,23 +12373,43 @@ var speed = 1;
 var dragging = false;
 var hs = 4;
 var APPROACH = 2.8 / hs;
+var defaultSettings = {
+  speed: 6.5,
+  touchSpeed: 7,
+  slideSpeed: 0,
+  middleDisplay: 1,
+  moviebrightness: -4,
+  showSensor: true,
+  rotateStars: true,
+  pinkStars: false,
+  middleDistance: 0.25,
+  effectDecayTime: 0.4,
+  hanabiEffectDecayTime: 0.8,
+  noteBaseSize: 11,
+  maxSlideCount: 500,
+  renderSurroundingAuxiliaryText: true,
+  slideIllegalRed: false,
+  showUI: false,
+  notPlayHoldEnd: false,
+  backgroundColor: "#0c0c1e",
+  // 暗色系背景
+  sfxVolumes: {}
+};
+var renderer = null;
+var logic = null;
+var playScoreRes = { tap: 0, hold: 0, slide: 0, touch: 0, break: 0, score: 0, breakScore: 0, invScore: 0 };
+var outlineImage = null;
+var images = null;
+var nowIndexLocal = 0;
 var size = 320;
-var CX = 160;
-var CY = 160;
-var R = 134;
 function resizeCanvas() {
-  const containerWidth = document.querySelector(".container").clientWidth - (window.innerWidth <= 480 ? 24 : 40);
-  const viewportHeight = window.innerHeight;
-  const maxCanvasHeight = Math.max(200, viewportHeight - 340);
-  size = Math.min(460, containerWidth, maxCanvasHeight);
+  const leftPanel = document.querySelector(".left-panel");
+  const containerWidth = leftPanel ? leftPanel.clientWidth : document.querySelector(".container").clientWidth - (window.innerWidth <= 480 ? 24 : 40);
+  const maxCanvasSize = 320;
+  size = Math.min(maxCanvasSize, containerWidth);
   cv.width = cv.height = size * devicePixelRatio;
   cv.style.width = cv.style.height = size + "px";
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.scale(devicePixelRatio, devicePixelRatio);
-  CX = size / 2;
-  CY = size / 2;
-  R = size / 2 - 26;
-  draw(realTime);
+  draw(realTime, 0);
   if (M.length > 0) {
     drawDensity(measureIndex(realTime));
   }
@@ -11090,13 +12476,16 @@ function processChartData(decoded) {
     },
     measures: M_arr,
     density: D_arr,
-    notes: decoded.notes
+    notes: decoded.notes,
+    tags: decoded.tags
   };
 }
 async function setup() {
+  console.log("[Activity] \u958B\u59CB\u521D\u59CB\u5316...");
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u521D\u59CB\u5316 SDK\u2026";
   statusEl.className = "status status-connecting";
   await discordSdk.ready();
+  console.log("[Activity] SDK \u521D\u59CB\u5316\u5B8C\u6210\uFF0C\u6B63\u5728\u7533\u8ACB\u6388\u6B0A...");
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u5411\u7528\u6236\u7AEF\u7533\u8ACB\u6388\u6B0A\u2026";
   const { code } = await discordSdk.commands.authorize({
     client_id: clientId,
@@ -11105,6 +12494,7 @@ async function setup() {
     prompt: "none",
     scope: ["identify"]
   });
+  console.log("[Activity] \u6388\u6B0A\u6210\u529F\uFF0Ccode:", code);
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u8207\u672C\u5730\u5F8C\u7AEF\u4EA4\u63DB Token\u2026";
   const res = await fetch("/.proxy/api/token", {
     method: "POST",
@@ -11113,12 +12503,15 @@ async function setup() {
   });
   if (!res.ok) throw new Error(`token \u4EA4\u63DB\u5931\u6557\uFF1A${res.status}`);
   const { access_token } = await res.json();
+  console.log("[Activity] Token \u4EA4\u63DB\u6210\u529F\uFF0C\u6B63\u5728\u9A57\u8B49\u8EAB\u5206...");
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u9032\u884C\u7528\u6236\u8EAB\u4EFD\u9A57\u8B49\u2026";
   auth = await discordSdk.commands.authenticate({ access_token });
+  console.log("[Activity] \u8EAB\u5206\u9A57\u8B49\u6210\u529F\uFF0C\u4F7F\u7528\u8005:", auth.user.username);
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u7372\u53D6\u8B5C\u9762\u8CC7\u6599\u2026";
   const chartRes = await fetch("/.proxy/api/chart");
   if (!chartRes.ok) throw new Error(`\u8B5C\u9762\u7372\u53D6\u5931\u6557\uFF1A${chartRes.status}`);
   const chartData = await chartRes.json();
+  console.log("[Activity] \u8B5C\u9762\u7372\u53D6\u6210\u529F:", chartData.name);
   chartText = chartData.text;
   songTitleEl.textContent = chartData.name;
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u89E3\u6790\u8B5C\u9762\u2026";
@@ -11126,20 +12519,44 @@ async function setup() {
   if (decoded.failed) {
     throw new Error("\u8B5C\u9762\u89E3\u6790\u5931\u6557\uFF1A\u8ACB\u6AA2\u67E5\u8A9E\u6CD5");
   }
+  console.log("[Activity] \u8B5C\u9762\u89E3\u6790\u6210\u529F");
+  statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u8F09\u5165\u5716\u7247\u8207\u5B57\u578B\u7D20\u6750\u2026";
+  images = await loadAllImages();
+  try {
+    const blob = await (async () => {
+      try {
+        return await (await fetch("Skin/outline.png")).blob();
+      } catch {
+        return null;
+      }
+    })();
+    if (blob) {
+      outlineImage = await createImageBitmap(blob);
+    }
+  } catch (e) {
+    console.error("Failed to load outline image:", e);
+  }
+  await document.fonts.ready;
   DATA = processChartData(decoded);
   M = DATA.measures;
   N = DATA.notes;
   D = DATA.density;
+  renderer = new SimaiRenderer(cv, defaultSettings);
+  renderer.setImages(images);
+  renderer.setContext(ctx);
+  logic = new SimaiLogicControler();
   $("hudBpm").textContent = Math.round(DATA.meta.bpm);
   $("hudMeasureMax").textContent = M.length - 1;
+  $("hudComboMax").textContent = N.length;
   const c = DATA.meta.counts;
   metaLineEl.textContent = `TAP ${c.tap} \xB7 HOLD ${c.hold} \xB7 SLIDE ${c.slide} \xB7 TOUCH ${c.touch} \xB7 BREAK ${c.break} \u2014 ALL ${DATA.meta.total}`;
   slider.max = M.length - 1;
-  rA.max = rB.max = M.length - 1;
+  const maxCombo = N.length - 1;
+  rA.max = rB.max = maxCombo;
   rA.value = 0;
-  rB.value = M.length - 1;
+  rB.value = maxCombo;
   range.start = 0;
-  range.end = M.length - 1;
+  range.end = maxCombo;
   setInputsDisabled(false);
   statusEl.textContent = `\u9023\u7DDA\u6210\u529F\uFF1A${auth.user.global_name ?? auth.user.username}`;
   statusEl.className = "status status-ready";
@@ -11167,7 +12584,7 @@ function syncUI() {
   const mi = measureIndex(realTime);
   if (!dragging) slider.value = mi;
   $("hudMeasure").textContent = mi;
-  $("hudTime").textContent = realTime.toFixed(2);
+  $("hudCombo").textContent = currentComboIndex();
   drawDensity(mi);
 }
 $("b_m5").onclick = () => jumpMeasure(-5);
@@ -11221,53 +12638,64 @@ function drawDensity(playheadMi) {
       dctx.fillRect(i * bw + 0.5, y, Math.max(1, bw - 1), bh);
     });
   });
-  if (typeof range !== "undefined") {
+  if (typeof range !== "undefined" && N.length > 0) {
+    const startM = measureIndex(N[range.start]?.time || 0);
+    const endM = measureIndex(N[range.end]?.time || 0);
     dctx.fillStyle = "rgba(255, 255, 255, 0.13)";
-    dctx.fillRect(range.start * bw, 0, (range.end - range.start + 1) * bw, h);
+    dctx.fillRect(startM * bw, 0, (endM - startM + 1) * bw, h);
     dctx.fillStyle = css("--slide");
-    dctx.fillRect(range.start * bw, 0, 2, h);
-    dctx.fillRect((range.end + 1) * bw - 2, 0, 2, h);
+    dctx.fillRect(startM * bw, 0, 2, h);
+    dctx.fillRect((endM + 1) * bw - 2, 0, 2, h);
   }
   dctx.fillStyle = "#ffffff";
   dctx.fillRect(playheadMi * bw, 0, Math.max(2, bw * 0.6), h);
 }
+function currentComboIndex() {
+  if (!N || N.length === 0) return 0;
+  const idx = N.findIndex((n) => n.time >= realTime);
+  return idx === -1 ? N.length - 1 : idx;
+}
 function syncRange() {
   range.start = Math.min(+rA.value, +rB.value);
   range.end = Math.max(+rA.value, +rB.value);
-  $("rangeLabel").textContent = range.start + " - " + range.end;
+  $("rangeLabel").textContent = `Combo ${range.start} - ${range.end}`;
   drawDensity(measureIndex(realTime));
 }
 rA.addEventListener("input", syncRange);
 rB.addEventListener("input", syncRange);
 $("setStart").onclick = () => {
-  const mi = measureIndex(realTime);
-  rA.value = mi;
-  rB.value = Math.max(range.end, mi);
+  const cIdx = currentComboIndex();
+  rA.value = cIdx;
+  rB.value = Math.max(range.end, cIdx);
   syncRange();
 };
 $("setEnd").onclick = () => {
-  const mi = measureIndex(realTime);
-  rB.value = mi;
-  rA.value = Math.min(range.start, mi);
+  const cIdx = currentComboIndex();
+  rB.value = cIdx;
+  rA.value = Math.min(range.start, cIdx);
   syncRange();
 };
-$("goStart").onclick = () => seek(M[range.start]);
+$("goStart").onclick = () => {
+  if (N[range.start]) seek(N[range.start].time);
+};
 $("previewRange").onclick = () => {
-  seek(M[range.start]);
-  previewStop = range.end + 1 < M.length ? M[range.end + 1] : DATA.meta.endTime;
-  if (!playing) playBtn.click();
+  if (N[range.start]) {
+    seek(N[range.start].time);
+    previewStop = (N[range.end]?.time || DATA.meta.endTime) + 0.8;
+    if (!playing) playBtn.click();
+  }
 };
 $("hsSlider").addEventListener("input", (e) => {
   const newHs = +e.target.value;
   $("hsVal").textContent = newHs.toFixed(1);
-  APPROACH = 2.8 / newHs;
-  draw(realTime);
+  defaultSettings.speed = newHs;
+  draw(realTime, 0);
 });
 $("exportGifBtn").onclick = async () => {
   setInputsDisabled(true);
   showMessage("\u{1F3AC} \u6B63\u5728\u5411 Bot \u767C\u9001\u6E32\u67D3\u8ACB\u6C42\uFF0C\u8ACB\u7A0D\u5019\u2026", "info");
-  const startTime = M[range.start];
-  const endTime = range.end + 1 < M.length ? M[range.end + 1] : DATA.meta.endTime;
+  const startCombo = range.start;
+  const endCombo = range.end;
   try {
     const res = await fetch("/.proxy/api/render", {
       method: "POST",
@@ -11277,13 +12705,16 @@ $("exportGifBtn").onclick = async () => {
         userId: auth.user.id,
         username: auth.user.global_name ?? auth.user.username,
         simai: chartText,
-        start: startTime,
-        end: endTime
+        startCombo,
+        endCombo
       })
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      showMessage("\u2705 \u8B5C\u9762\u9810\u89BD GIF \u6E32\u67D3\u6210\u529F\uFF0C\u5DF2\u50B3\u9001\u81F3 Discord \u983B\u9053\uFF01", "success");
+      showMessage("\u2705 \u8ACB\u6C42\u6210\u529F\uFF01\u6B63\u5728\u95DC\u9589\u8996\u7A97\u4E26\u5728\u983B\u9053\u4E2D\u958B\u59CB\u6E32\u67D3\u2026", "success");
+      setTimeout(() => {
+        discordSdk.close().catch((err) => console.error("Failed to close activity:", err));
+      }, 800);
     } else {
       showMessage(`\u274C \u6E32\u67D3\u5931\u6557\uFF1A${data.error || res.statusText}`, "error");
     }
@@ -11294,93 +12725,53 @@ $("exportGifBtn").onclick = async () => {
     setInputsDisabled(false);
   }
 };
-function draw(t) {
-  ctx.clearRect(0, 0, size, size);
-  ctx.strokeStyle = "#3c3c74";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(CX, CY, R, 0, 7);
-  ctx.stroke();
-  for (let p = 1; p <= 8; p++) {
-    const a = angleOf(p);
-    ctx.fillStyle = "#3c3c74";
-    ctx.beginPath();
-    ctx.arc(CX + R * Math.cos(a), CY + R * Math.sin(a), 5, 0, 7);
-    ctx.fill();
+function draw(t, dt = 0) {
+  if (!renderer || !logic || !DATA) return;
+  const {
+    buckets,
+    playCombo,
+    playScore,
+    noteQuantity,
+    nowIndex: updatedNowIndex
+  } = logic.get({
+    renderer,
+    globalTime: t,
+    realTime: t,
+    musicDelay: 0,
+    playing,
+    timeControlSliding: dragging,
+    readyBeat: false,
+    playedClock: [],
+    settings: defaultSettings,
+    visualHeight: 0,
+    notes: N,
+    decodedTags: DATA.tags || [],
+    playScoreRes,
+    nowIndex: nowIndexLocal,
+    skipAudioQueue: true
+  });
+  nowIndexLocal = updatedNowIndex;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = defaultSettings.backgroundColor;
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  const p = size * devicePixelRatio / scaleBase * renderer.scale;
+  ctx.setTransform(p, 0, 0, p, cv.width / 2, cv.height / 2);
+  if (outlineImage) {
+    ctx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
   }
-  for (const n of N) {
-    const isTouch = n.type === "touch";
-    const appear = n.time - APPROACH;
-    const gone = n.time + (n.holdDuration || 0) + (n.slideDuration || 0) + 0.08;
-    if (t < appear || t > gone) continue;
-    const prog = Math.min(1, (t - appear) / APPROACH);
-    const a = angleOf(n.pos);
-    const col = n.isBreak ? css("--brk") : n.type === "slide" ? css("--slide") : isTouch ? css("--touch") : n.isHold ? css("--hold") : css("--tap");
-    if (isTouch) {
-      const tr = (touchR[n.touchPos] ?? 0.6) * R;
-      const off = n.touchPos === "E" || n.touchPos === "D" ? Math.PI / 8 : 0;
-      const x2 = CX + tr * Math.cos(a + off), y2 = CY + tr * Math.sin(a + off);
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 2.5;
-      const s = 16 * (1.6 - 0.6 * prog);
-      ctx.strokeRect(x2 - s / 2, y2 - s / 2, s, s);
-      continue;
-    }
-    const r = prog * R;
-    const x = CX + r * Math.cos(a), y = CY + r * Math.sin(a);
-    if (n.isHold && t > n.time) {
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 7;
-      ctx.globalAlpha = 0.5;
-      ctx.beginPath();
-      ctx.moveTo(CX + R * 0.85 * Math.cos(a), CY + R * 0.85 * Math.sin(a));
-      ctx.lineTo(CX + R * Math.cos(a), CY + R * Math.sin(a));
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-    if (n.type === "slide" && n.slideEnd && t > n.time) {
-      const ea = angleOf(n.slideEnd);
-      const sp = Math.min(1, (t - n.time) / (n.slideDuration || 0.3));
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 3;
-      ctx.globalAlpha = 0.6;
-      ctx.setLineDash([6, 6]);
-      ctx.beginPath();
-      ctx.moveTo(CX + R * Math.cos(a), CY + R * Math.sin(a));
-      ctx.lineTo(
-        CX + R * (1 - sp) * Math.cos(a) + R * sp * Math.cos(ea),
-        CY + R * (1 - sp) * Math.sin(a) + R * sp * Math.sin(ea)
-      );
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
-    }
-    ctx.lineWidth = 3.5;
-    ctx.strokeStyle = col;
-    ctx.fillStyle = n.isEx ? col : "transparent";
-    if (n.isStar || n.type === "slide") {
-      star(x, y, 11);
-    } else {
-      ctx.beginPath();
-      ctx.arc(x, y, 10, 0, 7);
-      ctx.stroke();
-      if (n.isEx) {
-        ctx.globalAlpha = 0.35;
-        ctx.fill();
-        ctx.globalAlpha = 1;
-      }
-    }
-  }
-}
-function star(x, y, r) {
-  ctx.beginPath();
-  for (let i = 0; i < 10; i++) {
-    const rr = i % 2 ? r * 0.45 : r;
-    const a = -Math.PI / 2 + i * Math.PI / 5;
-    i ? ctx.lineTo(x + rr * Math.cos(a), y + rr * Math.sin(a)) : ctx.moveTo(x + rr * Math.cos(a), y + rr * Math.sin(a));
-  }
-  ctx.closePath();
-  ctx.stroke();
+  renderer.drawFrame({
+    globalTime: t,
+    buckets,
+    dt: dt * speed,
+    showSensor: defaultSettings.showSensor,
+    showSensorText: false,
+    playCombo,
+    playScore,
+    nowIndex: nowIndexLocal,
+    skipClear: true,
+    noteQuantity,
+    playScoreRes
+  });
 }
 function loop(ts) {
   if (!playing) return;
@@ -11399,7 +12790,7 @@ function loop(ts) {
     playBtn.textContent = "\u25B6";
   }
   syncUI();
-  draw(realTime);
+  draw(realTime, dt);
   if (playing) requestAnimationFrame(loop);
 }
 function setInputsDisabled(disabled) {

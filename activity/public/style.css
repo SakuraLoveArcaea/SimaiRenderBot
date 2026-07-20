@@ -1,3 +1,13 @@
+@font-face {
+  font-family: 'combo';
+  src: url('Fonts/Inter.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'mono';
+  src: url('Fonts/ShareTechMono-Regular.ttf') format('truetype');
+}
+
 :root {
   --bg: #14142b;          /* 機台深藍紫 */
   --panel: #1d1d3d;
@@ -18,25 +28,59 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", sans-serif;
-  min-height: 100%;
+  height: 100vh;
+  width: 100vw;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 10px;
+  overflow: hidden;
 }
 
 .container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   background: #191937;
-  padding: 20px;
+  padding: 15px 20px;
   border-radius: 16px;
   border: 1px solid var(--line);
   box-shadow: 0 10px 30px rgba(0,0,0,0.4);
   width: 100%;
-  max-width: 500px;
+  max-width: 900px;
+  max-height: calc(100vh - 20px);
+  overflow: hidden;
+}
+
+.main-content {
+  display: flex;
+  flex-direction: row;
+  gap: 20px;
+  width: 100%;
+  flex: 1;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.left-panel {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-start;
+  flex-shrink: 0;
+}
+
+.right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: space-between;
+  overflow: hidden;
+  min-width: 0;
 }
 
 header {
@@ -112,31 +156,47 @@ header .sub {
 
 .controls {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  gap: 8px;
   align-items: center;
-  flex-wrap: wrap;
-  justify-content: center;
   width: 100%;
 }
 
-.controls button {
+.control-buttons {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  width: 100%;
+  flex-wrap: nowrap;
+}
+
+.control-buttons button {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 8px 12px;
+  padding: 8px 6px;
   font-size: 13px;
   cursor: pointer;
-  min-width: 40px;
+  flex: 1;
+  text-align: center;
   transition: background .12s;
   touch-action: manipulation;
 }
 
-.controls button:hover:not(:disabled) {
+.control-settings {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+}
+
+.control-buttons button:hover:not(:disabled) {
   background: #2a2a55;
 }
 
-.controls button:disabled {
+.control-buttons button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -172,6 +232,7 @@ header .sub {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px 14px 10px;
+  min-width: 0;
 }
 
 #densityWrap {
@@ -381,6 +442,29 @@ header .sub {
   text-align: right;
 }
 
+@media (max-width: 768px) {
+  .container {
+    max-width: 500px;
+    max-height: calc(100vh - 20px);
+  }
+  .main-content {
+    flex-direction: column;
+    overflow-y: auto;
+    align-items: center;
+    gap: 12px;
+  }
+  .left-panel, .right-panel {
+    width: 100%;
+    max-width: 340px;
+  }
+  .right-panel {
+    overflow: visible;
+  }
+  html, body {
+    overflow: auto;
+  }
+}
+
 @media (max-width: 480px) {
   .container {
     padding: 12px;
@@ -390,9 +474,9 @@ header .sub {
   header h1 {
     font-size: 16px;
   }
-  .controls button {
-    padding: 6px 10px;
-    font-size: 12px;
+  .control-buttons button {
+    padding: 6px 4px;
+    font-size: 11px;
   }
   #timeline {
     padding: 8px 10px;

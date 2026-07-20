@@ -1,5 +1,7 @@
 import { DiscordSDK } from '@discord/embedded-app-sdk';
 import { simaiDecode } from '../web/Scripts/decode.js';
+import { SimaiRenderer } from '../web/Scripts/renderer.js';
+import { loadAllImages, SimaiLogicControler, scaleBase } from '../web/Scripts/helper.js';
 
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -16,10 +18,6 @@ const rA = $('rangeA'), rB = $('rangeB');
 
 const params = new URLSearchParams(window.location.search);
 const clientId = params.get('client_id') || '1527644569133649960';
-
-// ---------- 簡化繪製邏輯的數學輔助 ----------
-const angleOf = p => ((p - 0.5) * 45 - 90) * Math.PI / 180;
-const touchR = { A: 0.76, B: 0.45, C: 0, D: 0.76, E: 0.76 };
 
 // 全域錯誤監聽：若有任何 JS 運行或 Promise 錯誤，直接顯示在畫面上，方便開發排查
 window.onerror = function(message, source, lineno, colno, error) {
@@ -50,29 +48,48 @@ let dragging = false;
 let hs = 4.0;
 let APPROACH = 2.8 / hs;
 
+const defaultSettings = {
+    speed: 6.5,
+    touchSpeed: 7,
+    slideSpeed: 0,
+    middleDisplay: 1,
+    moviebrightness: -4,
+    showSensor: true,
+    rotateStars: true,
+    pinkStars: false,
+    middleDistance: 0.25,
+    effectDecayTime: 0.4,
+    hanabiEffectDecayTime: 0.8,
+    noteBaseSize: 11,
+    maxSlideCount: 500,
+    renderSurroundingAuxiliaryText: true,
+    slideIllegalRed: false,
+    showUI: false,
+    notPlayHoldEnd: false,
+    backgroundColor: '#0c0c1e', // 暗色系背景
+    sfxVolumes: {},
+};
+
+let renderer = null;
+let logic = null;
+let playScoreRes = { tap: 0, hold: 0, slide: 0, touch: 0, break: 0, score: 0, breakScore: 0, invScore: 0 };
+let outlineImage = null;
+let images = null;
+let nowIndexLocal = 0;
+
 let size = 320;
-let CX = 160;
-let CY = 160;
-let R = 134;
 
 function resizeCanvas() {
-  const containerWidth = document.querySelector('.container').clientWidth - (window.innerWidth <= 480 ? 24 : 40);
-  const viewportHeight = window.innerHeight;
-  // 保留頂部、底部與 timeline 的高度空間 (約 340px)
-  const maxCanvasHeight = Math.max(200, viewportHeight - 340);
-  
-  size = Math.min(460, containerWidth, maxCanvasHeight);
+  const leftPanel = document.querySelector('.left-panel');
+  const containerWidth = leftPanel 
+    ? leftPanel.clientWidth 
+    : (document.querySelector('.container').clientWidth - (window.innerWidth <= 480 ? 24 : 40));
+  const maxCanvasSize = 320;
+  size = Math.min(maxCanvasSize, containerWidth);
   cv.width = cv.height = size * devicePixelRatio;
   cv.style.width = cv.style.height = size + 'px';
   
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.scale(devicePixelRatio, devicePixelRatio);
-  
-  CX = size / 2;
-  CY = size / 2;
-  R = size / 2 - 26;
-  
-  draw(realTime);
+  draw(realTime, 0);
   if (M.length > 0) {
     drawDensity(measureIndex(realTime));
   }
@@ -147,14 +164,17 @@ function processChartData(decoded) {
         },
         measures: M_arr,
         density: D_arr,
-        notes: decoded.notes
+        notes: decoded.notes,
+        tags: decoded.tags
     };
 }
 
 async function setup() {
+    console.log('[Activity] 開始初始化...');
     statusEl.textContent = '連線中：正在初始化 SDK…';
     statusEl.className = 'status status-connecting';
     await discordSdk.ready();
+    console.log('[Activity] SDK 初始化完成，正在申請授權...');
 
     statusEl.textContent = '連線中：正在向用戶端申請授權…';
     const { code } = await discordSdk.commands.authorize({
@@ -164,6 +184,7 @@ async function setup() {
         prompt: 'none',
         scope: ['identify'],
     });
+    console.log('[Activity] 授權成功，code:', code);
 
     statusEl.textContent = '連線中：正在與本地後端交換 Token…';
     const res = await fetch('/.proxy/api/token', {
@@ -173,14 +194,17 @@ async function setup() {
     });
     if (!res.ok) throw new Error(`token 交換失敗：${res.status}`);
     const { access_token } = await res.json();
+    console.log('[Activity] Token 交換成功，正在驗證身分...');
 
     statusEl.textContent = '連線中：正在進行用戶身份驗證…';
     auth = await discordSdk.commands.authenticate({ access_token });
+    console.log('[Activity] 身分驗證成功，使用者:', auth.user.username);
 
     statusEl.textContent = '連線中：正在獲取譜面資料…';
     const chartRes = await fetch('/.proxy/api/chart');
     if (!chartRes.ok) throw new Error(`譜面獲取失敗：${chartRes.status}`);
     const chartData = await chartRes.json();
+    console.log('[Activity] 譜面獲取成功:', chartData.name);
 
     chartText = chartData.text;
     songTitleEl.textContent = chartData.name;
@@ -190,26 +214,52 @@ async function setup() {
     if (decoded.failed) {
         throw new Error('譜面解析失敗：請檢查語法');
     }
+    console.log('[Activity] 譜面解析成功');
 
-    // 初始化播放器資料
+    statusEl.textContent = '連線中：正在載入圖片與字型素材…';
+    images = await loadAllImages();
+    try {
+        const blob = await (async () => {
+            try {
+                return await (await fetch('Skin/outline.png')).blob();
+            } catch {
+                return null;
+            }
+        })();
+        if (blob) {
+            outlineImage = await createImageBitmap(blob);
+        }
+    } catch (e) {
+        console.error('Failed to load outline image:', e);
+    }
+    await document.fonts.ready;
+
+    // 初始化播放器資料與核心引擎
     DATA = processChartData(decoded);
     M = DATA.measures;
     N = DATA.notes;
     D = DATA.density;
 
+    renderer = new SimaiRenderer(cv, defaultSettings);
+    renderer.setImages(images);
+    renderer.setContext(ctx);
+    logic = new SimaiLogicControler();
+
     // 更新 UI 文字
     $('hudBpm').textContent = Math.round(DATA.meta.bpm);
     $('hudMeasureMax').textContent = M.length - 1;
+    $('hudComboMax').textContent = N.length;
     const c = DATA.meta.counts;
     metaLineEl.textContent = `TAP ${c.tap} · HOLD ${c.hold} · SLIDE ${c.slide} · TOUCH ${c.touch} · BREAK ${c.break} — ALL ${DATA.meta.total}`;
 
     // 更新 Sliders 範圍與最大值
     slider.max = M.length - 1;
-    rA.max = rB.max = M.length - 1;
+    const maxCombo = N.length - 1;
+    rA.max = rB.max = maxCombo;
     rA.value = 0;
-    rB.value = M.length - 1;
+    rB.value = maxCombo;
     range.start = 0;
-    range.end = M.length - 1;
+    range.end = maxCombo;
 
     // 啟用控制 UI
     setInputsDisabled(false);
@@ -246,7 +296,7 @@ function syncUI() {
   const mi = measureIndex(realTime);
   if (!dragging) slider.value = mi;
   $('hudMeasure').textContent = mi;
-  $('hudTime').textContent = realTime.toFixed(2);
+  $('hudCombo').textContent = currentComboIndex();
   drawDensity(mi);
 }
 
@@ -303,12 +353,14 @@ function drawDensity(playheadMi) {
   });
 
   // 選取範圍高亮
-  if (typeof range !== 'undefined') {
+  if (typeof range !== 'undefined' && N.length > 0) {
+    const startM = measureIndex(N[range.start]?.time || 0);
+    const endM = measureIndex(N[range.end]?.time || 0);
     dctx.fillStyle = 'rgba(255, 255, 255, 0.13)';
-    dctx.fillRect(range.start * bw, 0, (range.end - range.start + 1) * bw, h);
+    dctx.fillRect(startM * bw, 0, (endM - startM + 1) * bw, h);
     dctx.fillStyle = css('--slide');
-    dctx.fillRect(range.start * bw, 0, 2, h);
-    dctx.fillRect((range.end + 1) * bw - 2, 0, 2, h);
+    dctx.fillRect(startM * bw, 0, 2, h);
+    dctx.fillRect((endM + 1) * bw - 2, 0, 2, h);
   }
 
   // 播放頭
@@ -317,40 +369,50 @@ function drawDensity(playheadMi) {
 }
 
 // ---------- 範圍選取同步與預覽 ----------
+function currentComboIndex() {
+  if (!N || N.length === 0) return 0;
+  const idx = N.findIndex(n => n.time >= realTime);
+  return idx === -1 ? N.length - 1 : idx;
+}
+
 function syncRange() {
   range.start = Math.min(+rA.value, +rB.value);
   range.end   = Math.max(+rA.value, +rB.value);
-  $('rangeLabel').textContent = range.start + ' - ' + range.end;
+  $('rangeLabel').textContent = `Combo ${range.start} - ${range.end}`;
   drawDensity(measureIndex(realTime));
 }
 rA.addEventListener('input', syncRange);
 rB.addEventListener('input', syncRange);
 
 $('setStart').onclick = () => {
-  const mi = measureIndex(realTime);
-  rA.value = mi;
-  rB.value = Math.max(range.end, mi);
+  const cIdx = currentComboIndex();
+  rA.value = cIdx;
+  rB.value = Math.max(range.end, cIdx);
   syncRange();
 };
 $('setEnd').onclick = () => {
-  const mi = measureIndex(realTime);
-  rB.value = mi;
-  rA.value = Math.min(range.start, mi);
+  const cIdx = currentComboIndex();
+  rB.value = cIdx;
+  rA.value = Math.min(range.start, cIdx);
   syncRange();
 };
-$('goStart').onclick = () => seek(M[range.start]);
+$('goStart').onclick = () => {
+  if (N[range.start]) seek(N[range.start].time);
+};
 $('previewRange').onclick = () => {
-  seek(M[range.start]);
-  previewStop = range.end + 1 < M.length ? M[range.end + 1] : DATA.meta.endTime;
-  if (!playing) playBtn.click();
+  if (N[range.start]) {
+    seek(N[range.start].time);
+    previewStop = (N[range.end]?.time || DATA.meta.endTime) + 0.8;
+    if (!playing) playBtn.click();
+  }
 };
 
 // ---------- 流速 (ハイスピ) 控制 ----------
 $('hsSlider').addEventListener('input', e => {
   const newHs = +e.target.value;
   $('hsVal').textContent = newHs.toFixed(1);
-  APPROACH = 2.8 / newHs;
-  draw(realTime);
+  defaultSettings.speed = newHs;
+  draw(realTime, 0);
 });
 
 // ---------- GIF 渲染並傳送 ----------
@@ -358,8 +420,8 @@ $('exportGifBtn').onclick = async () => {
   setInputsDisabled(true);
   showMessage('🎬 正在向 Bot 發送渲染請求，請稍候…', 'info');
 
-  const startTime = M[range.start];
-  const endTime = range.end + 1 < M.length ? M[range.end + 1] : DATA.meta.endTime;
+  const startCombo = range.start;
+  const endCombo = range.end;
 
   try {
     const res = await fetch('/.proxy/api/render', {
@@ -370,15 +432,18 @@ $('exportGifBtn').onclick = async () => {
         userId: auth.user.id,
         username: auth.user.global_name ?? auth.user.username,
         simai: chartText,
-        start: startTime,
-        end: endTime,
+        startCombo: startCombo,
+        endCombo: endCombo,
       }),
     });
 
     const data = await res.json().catch(() => ({}));
 
     if (res.ok) {
-      showMessage('✅ 譜面預覽 GIF 渲染成功，已傳送至 Discord 頻道！', 'success');
+      showMessage('✅ 請求成功！正在關閉視窗並在頻道中開始渲染…', 'success');
+      setTimeout(() => {
+        discordSdk.close().catch(err => console.error("Failed to close activity:", err));
+      }, 800);
     } else {
       showMessage(`❌ 渲染失敗：${data.error || res.statusText}`, 'error');
     }
@@ -390,84 +455,61 @@ $('exportGifBtn').onclick = async () => {
   }
 };
 
-// ---------- 簡化繪製邏輯 ----------
+// ---------- 繪製邏輯 ----------
 
-function draw(t) {
-  ctx.clearRect(0, 0, size, size);
-  // 外圈 + 8 個按鍵孔
-  ctx.strokeStyle = '#3c3c74'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(CX, CY, R, 0, 7); ctx.stroke();
-  for (let p = 1; p <= 8; p++) {
-    const a = angleOf(p);
-    ctx.fillStyle = '#3c3c74';
-    ctx.beginPath(); ctx.arc(CX + R*Math.cos(a), CY + R*Math.sin(a), 5, 0, 7); ctx.fill();
+function draw(t, dt = 0) {
+  if (!renderer || !logic || !DATA) return;
+
+  const {
+    buckets, playCombo, playScore, noteQuantity,
+    nowIndex: updatedNowIndex,
+  } = logic.get({
+    renderer,
+    globalTime: t,
+    realTime: t,
+    musicDelay: 0,
+    playing: playing,
+    timeControlSliding: dragging,
+    readyBeat: false,
+    playedClock: [],
+    settings: defaultSettings,
+    visualHeight: 0,
+    notes: N,
+    decodedTags: DATA.tags || [],
+    playScoreRes,
+    nowIndex: nowIndexLocal,
+    skipAudioQueue: true,
+  });
+  nowIndexLocal = updatedNowIndex;
+
+  // 1. 清理與繪製背景色
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = defaultSettings.backgroundColor;
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  
+  // 2. 套用 Maimai 縮放並置中
+  const p = size * devicePixelRatio / scaleBase * renderer.scale;
+  ctx.setTransform(p, 0, 0, p, cv.width / 2, cv.height / 2);
+  
+  // 3. 繪製框線圖
+  if (outlineImage) {
+    ctx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
   }
 
-  for (const n of N) {
-    const isTouch = n.type === 'touch';
-    const appear = n.time - APPROACH;
-    const gone = n.time + (n.holdDuration || 0) + (n.slideDuration || 0) + 0.08;
-    if (t < appear || t > gone) continue;
-    const prog = Math.min(1, (t - appear) / APPROACH);
-    const a = angleOf(n.pos);
-    const col = n.isBreak ? css('--brk')
-              : n.type === 'slide' ? css('--slide')
-              : isTouch ? css('--touch')
-              : n.isHold ? css('--hold') : css('--tap');
-
-    if (isTouch) {
-      const tr = (touchR[n.touchPos] ?? 0.6) * R;
-      const off = n.touchPos === 'E' || n.touchPos === 'D' ? Math.PI/8 : 0;
-      const x = CX + tr * Math.cos(a + off), y = CY + tr * Math.sin(a + off);
-      ctx.strokeStyle = col; ctx.lineWidth = 2.5;
-      const s = 16 * (1.6 - 0.6 * prog);
-      ctx.strokeRect(x - s/2, y - s/2, s, s);
-      continue;
-    }
-
-    const r = prog * R;
-    const x = CX + r * Math.cos(a), y = CY + r * Math.sin(a);
-
-    if (n.isHold && t > n.time) { // Hold 進行中
-      ctx.strokeStyle = col; ctx.lineWidth = 7; ctx.globalAlpha = 0.5;
-      ctx.beginPath();
-      ctx.moveTo(CX + R*0.85*Math.cos(a), CY + R*0.85*Math.sin(a));
-      ctx.lineTo(CX + R*Math.cos(a), CY + R*Math.sin(a));
-      ctx.stroke(); ctx.globalAlpha = 1;
-    }
-    if (n.type === 'slide' && n.slideEnd && t > n.time) { // Slide 進行中
-      const ea = angleOf(n.slideEnd);
-      const sp = Math.min(1, (t - n.time) / (n.slideDuration || 0.3));
-      ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 0.6;
-      ctx.setLineDash([6, 6]);
-      ctx.beginPath();
-      ctx.moveTo(CX + R*Math.cos(a), CY + R*Math.sin(a));
-      ctx.lineTo(CX + R*(1-sp)*Math.cos(a) + R*sp*Math.cos(ea),
-                 CY + R*(1-sp)*Math.sin(a) + R*sp*Math.sin(ea));
-      ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
-    }
-
-    ctx.lineWidth = 3.5;
-    ctx.strokeStyle = col;
-    ctx.fillStyle = n.isEx ? col : 'transparent';
-    if (n.isStar || n.type === 'slide') { // 星形
-      star(x, y, 11);
-    } else {
-      ctx.beginPath(); ctx.arc(x, y, 10, 0, 7); ctx.stroke();
-      if (n.isEx) { ctx.globalAlpha = 0.35; ctx.fill(); ctx.globalAlpha = 1; }
-    }
-  }
-}
-
-function star(x, y, r) {
-  ctx.beginPath();
-  for (let i = 0; i < 10; i++) {
-    const rr = i % 2 ? r * 0.45 : r;
-    const a = -Math.PI/2 + i * Math.PI/5;
-    i ? ctx.lineTo(x + rr*Math.cos(a), y + rr*Math.sin(a))
-      : ctx.moveTo(x + rr*Math.cos(a), y + rr*Math.sin(a));
-  }
-  ctx.closePath(); ctx.stroke();
+  // 4. 繪製核心影格 (使用相同的變形矩陣)
+  renderer.drawFrame({
+    globalTime: t,
+    buckets,
+    dt: dt * speed,
+    showSensor: defaultSettings.showSensor,
+    showSensorText: false,
+    playCombo,
+    playScore,
+    nowIndex: nowIndexLocal,
+    skipClear: true,
+    noteQuantity,
+    playScoreRes,
+  });
 }
 
 // ---------- 播放 Loop 迴圈 ----------
@@ -488,7 +530,7 @@ function loop(ts) {
     playBtn.textContent = '▶';
   }
   syncUI();
-  draw(realTime);
+  draw(realTime, dt);
   if (playing) requestAnimationFrame(loop);
 }
 

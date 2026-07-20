@@ -14,71 +14,81 @@
     <div class="sub" id="metaLine"></div>
   </header>
 
-  <div id="stage">
-    <canvas id="chartCanvas"></canvas>
-    <div id="hud">
-      <span>BPM <b id="hudBpm">-</b></span>
-      <span>小節 <b id="hudMeasure">0</b> / <span id="hudMeasureMax">-</span></span>
-      <span><b id="hudTime">0.00</b>s</span>
-    </div>
-  </div>
-
-  <div class="controls">
-    <button id="b_m5" title="後退5小節" disabled>＜＜＜</button>
-    <button id="b_m1" title="後退1小節" disabled>＜＜</button>
-    <button id="b_f1" title="微調 -0.1s" disabled>＜</button>
-    <button id="playBtn" disabled>▶</button>
-    <button id="b_f2" title="微調 +0.1s" disabled>＞</button>
-    <button id="b_p1" title="前進1小節" disabled>＞＞</button>
-    <button id="b_p5" title="前進5小節" disabled>＞＞＞</button>
-    <span class="speedbox">倍速
-      <select id="speedSel" disabled>
-        <option value="0.25">0.25×</option>
-        <option value="0.5">0.5×</option>
-        <option value="0.75">0.75×</option>
-        <option value="1" selected>1.0×</option>
-      </select>
-    </span>
-    <span class="speedbox">流速
-      <input type="range" id="hsSlider" min="1" max="10" step="0.5" value="4.0" style="width:75px" disabled>
-      <span id="hsVal">4.0</span>
-    </span>
-  </div>
-
-  <div id="timeline">
-    <div id="densityWrap"><canvas id="densityCanvas"></canvas></div>
-    <div id="timeLabels"></div>
-    <input type="range" id="measureSlider" min="0" value="0" step="1" disabled>
-    <div id="measureTicks"></div>
-
-    <div id="rangePanel">
-      <div id="rangeInfo">
-        <b class="range-title">GIF範圍</b>
-        <span id="rangeLabel">0 - 0</span>
-        <button id="setStart" disabled>起點=目前</button>
-        <button id="setEnd" disabled>終點=目前</button>
-        <button id="goStart" disabled>跳到起點</button>
-        <button id="previewRange" disabled>▶ 預覽</button>
-        <button id="exportGifBtn" class="btn-export" disabled>🎬 渲染並傳送此區間</button>
+  <div class="main-content">
+    <div class="left-panel">
+      <div id="stage">
+        <canvas id="chartCanvas"></canvas>
+        <div id="hud">
+          <span>BPM <b id="hudBpm">-</b></span>
+          <span>小節 <b id="hudMeasure">0</b> / <span id="hudMeasureMax">-</span></span>
+          <span>Combo <b id="hudCombo">0</b> / <span id="hudComboMax">-</span></span>
+        </div>
       </div>
-      <div id="rangeTrack">
-        <input id="rangeA" type="range" min="0" value="0" step="1" disabled>
-        <input id="rangeB" type="range" min="0" value="0" step="1" disabled>
+
+      <div class="controls">
+        <div class="control-buttons">
+          <button id="b_m5" title="後退5小節" disabled>＜＜＜</button>
+          <button id="b_m1" title="後退1小節" disabled>＜＜</button>
+          <button id="b_f1" title="微調 -0.1s" disabled>＜</button>
+          <button id="playBtn" disabled>▶</button>
+          <button id="b_f2" title="微調 +0.1s" disabled>＞</button>
+          <button id="b_p1" title="前進1小節" disabled>＞＞</button>
+          <button id="b_p5" title="前進5小節" disabled>＞＞＞</button>
+        </div>
+        <div class="control-settings">
+          <span class="speedbox">倍速
+            <select id="speedSel" disabled>
+              <option value="0.25">0.25×</option>
+              <option value="0.5">0.5×</option>
+              <option value="0.75">0.75×</option>
+              <option value="1" selected>1.0×</option>
+            </select>
+          </span>
+          <span class="speedbox">流速
+            <input type="range" id="hsSlider" min="1" max="10" step="0.5" value="4.0" style="width:75px" disabled>
+            <span id="hsVal">4.0</span>
+          </span>
+        </div>
       </div>
     </div>
-  </div>
 
-  <div id="legend">
-    <span><i style="background:var(--tap)"></i>TAP</span>
-    <span><i style="background:var(--hold)"></i>HOLD</span>
-    <span><i style="background:var(--slide)"></i>SLIDE</span>
-    <span><i style="background:var(--touch)"></i>TOUCH</span>
-    <span><i style="background:var(--brk)"></i>BREAK</span>
-  </div>
+    <div class="right-panel">
+      <div id="timeline">
+        <div id="densityWrap"><canvas id="densityCanvas"></canvas></div>
+        <div id="timeLabels"></div>
+        <input type="range" id="measureSlider" min="0" value="0" step="1" disabled>
+        <div id="measureTicks"></div>
 
-  <footer class="app-footer">
-    <p id="message" class="message"></p>
-  </footer>
+        <div id="rangePanel">
+          <div id="rangeInfo">
+            <b class="range-title">GIF範圍</b>
+            <span id="rangeLabel">0 - 0</span>
+            <button id="setStart" disabled>起點=目前</button>
+            <button id="setEnd" disabled>終點=目前</button>
+            <button id="goStart" disabled>跳到起點</button>
+            <button id="previewRange" disabled>▶ 預覽</button>
+            <button id="exportGifBtn" class="btn-export" disabled>🎬 渲染並傳送此區間</button>
+          </div>
+          <div id="rangeTrack">
+            <input id="rangeA" type="range" min="0" value="0" step="1" disabled>
+            <input id="rangeB" type="range" min="0" value="0" step="1" disabled>
+          </div>
+        </div>
+      </div>
+
+      <div id="legend">
+        <span><i style="background:var(--tap)"></i>TAP</span>
+        <span><i style="background:var(--hold)"></i>HOLD</span>
+        <span><i style="background:var(--slide)"></i>SLIDE</span>
+        <span><i style="background:var(--touch)"></i>TOUCH</span>
+        <span><i style="background:var(--brk)"></i>BREAK</span>
+      </div>
+
+      <footer class="app-footer">
+        <p id="message" class="message"></p>
+      </footer>
+    </div>
+  </div>
 </div>
 <script type="module" src="dist/main.js"></script>
 </body>

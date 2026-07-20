@@ -255,27 +255,30 @@ stateDiagram-v2
    | (4) fetch GET /.proxy/api/chart 獲取譜面資料
    |     --> 後端從 testChart/ 讀取第一份 .simai 檔案文字回傳
    | (5) 在前端執行 simaiDecode(text) 即時解析譜面內容
-   | (6) 執行 processChartData() 前處理並計算 measures 與 density
-   | (7) 啟動 60fps 的 requestAnimationFrame 畫布渲染循環，繪製 Canvas 軌道與 Note
+   | (6) 載入圖片與字型資源，初始化 SimaiRenderer 繪圖引擎與 SimaiLogicControler
+   | (7) 執行 processChartData() 前處理並計算 measures 與 density
+   | (8) 啟動 60fps 的 requestAnimationFrame 畫布渲染循環，繪製 Canvas 軌道與 Note
    |
-   | --- [使用者在介面上拉動範圍，決定要渲染的 GIF 區間 (例如小節 10-30)] ---
+   | --- [使用者在介面上拉動範圍，決定要渲染的 GIF 區間 (例如 Combo 100 - 250)] ---
    |
-   | (8) 點擊「🎬 渲染並傳送此區間」
-   |     --> 計算 start/end 實際秒數
-   |     --> POST /.proxy/api/render { simai, start, end, channelId, userId }
+   | (9) 點擊「🎬 渲染並傳送此區間」
+   |     --> 顯示請求成功提示，800ms 後調用 discordSdk.close() 關閉網頁回到 Discord
+   |     --> 同時 POST /.proxy/api/render { simai, startCombo, endCombo, channelId, userId }
    v
 [src/activity-server.js] (後端)
-   | (9) 調用後端 Playwright 渲染引擎：service.renderGif(simai, { start, end })
-   | (10) 產出預覽 GIF 後，由 Bot 直接發送至當前頻道，並 @ 點擊的使用者
+   | (10) 收到請求，調用 service.comboInfo(simai) 解析完整譜面時間軸，換算出 start/end 實際秒數
+   | (11) 依區間時長與音符數估計渲染時間，在頻道中發送「🎬 正在渲染，預估 N 秒...」提示訊息
+   | (12) 立即向前端返回 200 OK（以讓前端立即關閉視窗），並在背景（Background）異步啟動 Playwright 渲染引擎
+   | (13) 產出預覽 GIF 後，由 Bot 發送至頻道，並刪除之前的進度提示訊息
    v
-[Discord 聊天頻道] (Bot 發送 GIF)
+[Discord 聊天頻道] (Bot 發送 GIF，刪除提示)
 ```
 
 ---
 
 ### 📊 數據前處理與核心運算 (Data Prep & Processing)
 
-前端在獲取到 `.simai` 譜面原文後，利用 `processChartData` 進行了以下特徵計算，以驅動 UI 與時間軸：
+前端在獲取到 `.simai` 譜面原文後，利用 `processChartData` 與時間軸邏輯進行了以下特徵計算，以驅動 UI 與時間軸：
 
 1. **小節時間邊界計算 (Measures Calculation)**：
    - 根據譜面解析出的第一組 `BPM`，計算出單個小節的標準時長（Measure Duration = 240 / BPM 秒）。
@@ -284,8 +287,15 @@ stateDiagram-v2
    - 遍歷所有解析出的 Note 物件，根據 `n.time` 判定其落在哪個小節區間 `[M[i], M[i+1])`。
    - 依照 Note 的類型（`tap`、`hold`、`slide`、`touch`，以及 `isBreak`）累加至該小節的計數桶中，生成二維密度矩陣 `D`。
    - 密度矩陣會傳送給下方畫布，動態繪製成柱狀密度分布圖，並由主播放進度線橫跨其上。
-3. **響應式布局與動態縮放 (Responsive Scaling)**：
-   - 頁面掛載 `resizeCanvas` 監聽器，當 Discord 用戶端調整視窗大小（如手機橫豎屏切換、側邊欄拉動）時，重新取得可用寬高，以 2D canvas 重定大小、重置座標原點 `(CX, CY)` 並重新繪製，以實現自適應跨平台相容。
+3. **選取範圍座標映射高亮**：
+   - 雖然前端範圍選取器（rA/rB）是基於音符（Combo）編號定位的，但音符密度圖是基於「小節」繪製的。
+   - 前端繪製選取高亮時，會自動將 `range.start` 和 `range.end`（Combo 索引）對應的音符時間戳記傳入 `measureIndex` 換算出對應的小節邊界，以在密度圖上渲染出精確的高亮反白區塊。
+4. **響應式雙欄佈局與彈性收縮 (Responsive Split-Pane Layout)**：
+   - 採用 CSS Flexbox 與 Media Query 實現自適應佈局。在寬螢幕（$\ge 768\text{px}$）下為左右雙欄並排佈局（左欄固定 320px 放置畫布與播放控制，右欄佔據剩餘空間放置時間軸、密度圖與設定），成功將整體高度限縮在 `480px` 內，達成「完全免滾動」的精緻視覺體驗。
+   - 在窄螢幕（$< 768\text{px}$，如手機端）下自動降級為單欄上下堆疊佈局。
+   - 子容器與時間軸區塊皆設有 `min-width: 0` 屬性，確保在極限收縮的寬度下，整個 App 仍可彈性縮小，且按鈕群能自適應折行，解決了元件溢出被 Discord 用戶端截斷裁切的問題。
+5. **畫布自適應縮放 (Canvas Dynamic Scaling)**：
+   - 頁面掛載 `resizeCanvas` 監聽器，會動態偵測左側欄寬度。在寬螢幕下固定為 320px  arcade 比例，而在手機端則會隨著螢幕寬度等比收縮重繪，實現自適應跨平台相容。
 
 ---
 
