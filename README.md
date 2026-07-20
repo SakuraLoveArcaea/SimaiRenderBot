@@ -13,7 +13,7 @@ simai 文字
       → simaiDecode() 解析 → SimaiLogicControler 逐幀算狀態 → SimaiRenderer 畫 canvas
       → 每幀 toDataURL 成 PNG，透過 __emitFrame binding 串回 Node
   → ffmpeg 從 stdin 讀 PNG 序列，palettegen 兩段式轉 GIF + gifsicle lossy 二次壓縮（自動降畫質直到 < 10MB）
-  → Discord 附件回覆
+  → Discord 附件回覆（16:9 寬版，例如 640×360）
 ```
 
 以 PNG 幀直接串給 ffmpeg，跳過了 WebCodecs 的 H.264 中間層（那趟編碼/解碼對最終 GIF 畫質毫無幫助，畫質由調色盤量化決定）；
@@ -83,11 +83,16 @@ try {
 
 | 欄位 | 預設 | 說明 |
 |---|---|---|
-| `width` | `480` | 輸出寬（正方形；壓縮階梯可能為了塞進大小上限再往下降到 360/320/280/240） |
+| `width` | `960` | 渲染畫布寬 |
+| `height` | `540` | 渲染畫布高（預設 16:9；譜面是正方形、置中，左右留背景色） |
 | `start` | `0` | 起點秒數 |
 | `end` | `null` | 終點秒數，`null` = 譜面結尾 |
 | `maxDuration` | `30` | 渲染長度硬上限（秒），超過的尾段不畫 |
 | `sizeLimit` | `9.5 * 1024 * 1024` | GIF 體積上限（bytes）；壓到最低品質仍超過就丟 `GIF_TOO_LARGE` |
+
+輸出為 **16:9 寬版**，目的是讓 GIF 在 Discord 版面上不要佔掉太多垂直空間。
+壓縮階梯會為了塞進 `sizeLimit` 逐級降到 `640 → 560 → 480 → 400` 寬（高度等比，例如 640×360）；
+因為譜面只佔中間 9/16，這些數字比正方形輸出時大，換算後譜面實際像素才相當。
 
 ### 注意事項
 
@@ -261,18 +266,31 @@ stateDiagram-v2
    |
    | --- [使用者在介面上拉動範圍，決定要渲染的 GIF 區間 (例如 Combo 100 - 250)] ---
    |
-   | (9) 點擊「🎬 渲染並傳送此區間」
+   | (9) 點擊「✅ 傳送此區間」
    |     --> 顯示請求成功提示，800ms 後調用 discordSdk.close() 關閉網頁回到 Discord
-   |     --> 同時 POST /.proxy/api/render { simai, startCombo, endCombo, channelId, userId }
+   |     --> 同時 POST /.proxy/api/render
+   |         { simai, startCombo, endCombo, chartName, cleanCut, channelId, userId }
    v
 [src/activity-server.js] (後端)
    | (10) 收到請求，調用 service.comboInfo(simai) 解析完整譜面時間軸，換算出 start/end 實際秒數
    | (11) 依區間時長與音符數估計渲染時間，在頻道中發送「🎬 正在渲染，預估 N 秒...」提示訊息
-   | (12) 立即向前端返回 200 OK（以讓前端立即關閉視窗），並在背景（Background）異步啟動 Playwright 渲染引擎
-   | (13) 產出預覽 GIF 後，由 Bot 發送至頻道，並刪除之前的進度提示訊息
+   | (12) 立即向前端返回 200 OK（以讓前端立即關閉視窗），並在背景（Background）異步啟動渲染：
+   |      · cleanCut=true（預設）→ buildCleanCutSimai() 把片段從原始碼切出來、補回開頭的
+   |        (BPM)/{分音}，整段從頭渲染
+   |      · cleanCut=false → 送整份譜面 + start/end，由渲染器只畫那一段
+   | (13) 產出 GIF 後由 Bot 發送至頻道（附歌名與段落，並帶「▶ 繼續看譜」按鈕），
+   |      並刪除之前的進度提示訊息
    v
 [Discord 聊天頻道] (Bot 發送 GIF，刪除提示)
+   |
+   | (14) 有人點「▶ 繼續看譜」
+   |      --> bot.js 把該段 combo 區間存進 resume.js（key = userId，一次性、2 分鐘 TTL）
+   |      --> interaction.launchActivity() 開啟 Activity
+   |      --> Activity 驗證身分後 GET /.proxy/api/resume?userId=... 取回並還原選取區間與播放位置
 ```
+
+> Discord 的 `launchActivity()` 無法夾帶參數，所以「回到同一個位置」只能走這種
+> 伺服器端暫存的方式；沒取到就維持預設（兩個端點在最兩側＝整首全選）。
 
 ---
 
@@ -290,12 +308,33 @@ stateDiagram-v2
 3. **選取範圍座標映射高亮**：
    - 雖然前端範圍選取器（rA/rB）是基於音符（Combo）編號定位的，但音符密度圖是基於「小節」繪製的。
    - 前端繪製選取高亮時，會自動將 `range.start` 和 `range.end`（Combo 索引）對應的音符時間戳記傳入 `measureIndex` 換算出對應的小節邊界，以在密度圖上渲染出精確的高亮反白區塊。
-4. **響應式雙欄佈局與彈性收縮 (Responsive Split-Pane Layout)**：
-   - 採用 CSS Flexbox 與 Media Query 實現自適應佈局。在寬螢幕（$\ge 768\text{px}$）下為左右雙欄並排佈局（左欄固定 320px 放置畫布與播放控制，右欄佔據剩餘空間放置時間軸、密度圖與設定），成功將整體高度限縮在 `480px` 內，達成「完全免滾動」的精緻視覺體驗。
-   - 在窄螢幕（$< 768\text{px}$，如手機端）下自動降級為單欄上下堆疊佈局。
-   - 子容器與時間軸區塊皆設有 `min-width: 0` 屬性，確保在極限收縮的寬度下，整個 App 仍可彈性縮小，且按鈕群能自適應折行，解決了元件溢出被 Discord 用戶端截斷裁切的問題。
+4. **響應式佈局 (Responsive Layout)**：
+   - 寬螢幕（≥ 768px）為左右雙欄：左欄是譜面＋左右各一排導覽鍵＋播放鍵，右欄是時間軸、密度圖與選取區間。
+   - 窄螢幕（< 768px，手機）降級為單欄上下堆疊，並且**整頁不捲動**：譜面與播放鍵固定不壓縮，其餘元件為固定高度，譜面吸收剩餘空間自動縮放（實測 360–430px 寬的手機上譜面約 200–280px）。
+   - 子容器與時間軸皆設 `min-width: 0`，避免在極限寬度下溢出被 Discord 用戶端裁切。
 5. **畫布自適應縮放 (Canvas Dynamic Scaling)**：
-   - 頁面掛載 `resizeCanvas` 監聽器，會動態偵測左側欄寬度。在寬螢幕下固定為 320px  arcade 比例，而在手機端則會隨著螢幕寬度等比收縮重繪，實現自適應跨平台相容。
+   - `resizeCanvas()` 取 `#stage` 可用寬高的**較小值**當邊長，確保譜面永遠是正方形。
+   - `#stage` 的尺寸由 flex 版面決定、不受畫布影響，因此不會產生「讀 stage 高度 → 改 canvas 高度 → stage 高度又變」的互相拉扯；另掛 `ResizeObserver` 在版面變動時重新同步 backing store。
+6. **手機版頂部安全距離 (Discord 活動列避讓)**：
+   - 手機版 Discord 會在畫面最上方疊加自己的活動列（返回鈕／活動名稱／退出鈕），那是原生 App 畫在 WebView 之上的，網頁量不到高度。
+   - 解法是組合兩個拿得到的線索：`discordSdk.platform === 'mobile'` 決定要不要留白（桌機完全不留），再用 `calc(env(safe-area-inset-top) + 50px)` 依機型的瀏海／狀態列高度自動算出留白，不寫死數字。
+
+---
+
+### 🎛️ Activity 操作說明
+
+| 功能 | 說明 |
+|---|---|
+| **選取區間** | 拖曳滑桿兩端的端點；拖到哪譜面就即時 seek 到哪 |
+| **雙擊鎖定端點** | 雙擊（手機雙點）離手指最近的端點可鎖定／解鎖，鎖定後變琥珀色且拖不動，避免調好被誤觸 |
+| **方向鍵微調** | 碰過端點 → ←/→ 調該端點（±1 combo，Shift ±10）；碰過進度條 → ←/→ 調播放進度（±0.1s，Shift ±1 小節）。掛在 `document` 上，點過別的元件焦點跑掉也還能用 |
+| **導覽鍵連動** | ＜＜＜/＜＜/＜/＞/＞＞/＞＞＞ 移動播放頭時，「作用中」的端點（`◆` 標記）會跟著走 |
+| **⚙ 設定** | 倍速（0.25–1.00）、流速、音效模式、切的乾淨。浮層用 `position: fixed`，不會被 `overflow:hidden` 的祖先切掉 |
+| **音效模式** | 三段：靜音／簡易／完整。**簡易**是用振盪器即時合成的短音，零下載、點下去馬上有聲；**完整**才會下載 wav，且下載期間先用簡易音頂著，載完自動換 |
+| **切的乾淨** | 預設開啟。把選取範圍從 simai 原始碼切出來成獨立片段（切到 hold／slide 中間也照切），再補回開頭的 `(BPM)`／`{分音}` 送去渲染 |
+
+> **切的乾淨的先天限制**：切割是依 simai 的**逗號段**邊界，實際切點會落在最接近的逗號上，
+> 可能與所選 combo 差一兩顆。要精確到單顆 combo 得改動原始碼結構。
 
 ---
 
@@ -307,19 +346,32 @@ stateDiagram-v2
 
 ```
 web/render.html        無 UI 渲染頁：window.renderChartToFrames(simai, opts) 逐幀 PNG 串回 Node
-web/Scripts/           自 web-mai-chart-x 提取的核心（未修改）
+web/Scripts/           自 web-mai-chart-x 提取的核心（helper.js 有改，見下方致謝）
 web/Skin/  web/Fonts/  素材
+web/Sounds/            音效素材（Activity 的「完整音效」模式使用）
 src/server.js          服務 web/ 的極簡靜態伺服器
 src/render.js          SimaiRenderService：常駐瀏覽器 + ffmpeg GIF 壓縮階梯
+src/chart.js           譜面讀取、依時間切 simai 片段、切的乾淨（buildCleanCutSimai）
+src/resume.js          「繼續看譜」的續看位置暫存（一次性、2 分鐘 TTL）
+src/activity-server.js Activity 後端：靜態頁 + OAuth token 交換 + 渲染請求 + 續看
 src/cli.js             本機測試 CLI
 src/register-commands.js  Slash command 註冊
 src/bot.js             Discord bot 本體
+activity/main.js       Activity 前端原始碼（改完要跑 npm run build:activity）
+activity/public/       Activity 靜態頁與打包後的 dist/main.js
 ```
 
 ## 致謝
 
 `web/Scripts/`（decode.js / renderer.js / helper.js / indexDB.js）與 `web/Skin/`、`web/Fonts/`
-均直接提取自 [susuy0725/web-mai-chart-x](https://github.com/susuy0725/web-mai-chart-x)，未修改渲染邏輯本身。
+均直接提取自 [susuy0725/web-mai-chart-x](https://github.com/susuy0725/web-mai-chart-x)，渲染邏輯（renderer.js / decode.js）本身未修改。
+
+`helper.js` 的 `AudioManager` 有兩處為本專案調整：
+
+- 新增 `muted` / `synthFallback`：支援「靜音／簡易（振盪器合成音，免下載）／完整」三段音效模式。
+- **移除圖片與音效的 IndexedDB Blob 快取**：iOS WKWebView 在第二次開啟、需要一次讀回大量 Blob 時，
+  會在原生層級直接把整個 WebView 砍掉（沒有 JS 錯誤、也不會觸發 `pagehide`），表現為「開第二次必閃退」。
+  改成每次直接 fetch 同源靜態檔即可解決。
 該專案的 Skin 與音訊素材則源自 [LingFeng-bbben/MajdataView](https://github.com/LingFeng-bbben/MajdataView) 與
 [re-poem/MajdataViewX](https://github.com/re-poem/MajdataViewX)。
 
