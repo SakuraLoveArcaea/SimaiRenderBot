@@ -12713,7 +12713,7 @@ $("exportGifBtn").onclick = async () => {
     if (res.ok) {
       showMessage("\u2705 \u8ACB\u6C42\u6210\u529F\uFF01\u6B63\u5728\u95DC\u9589\u8996\u7A97\u4E26\u5728\u983B\u9053\u4E2D\u958B\u59CB\u6E32\u67D3\u2026", "success");
       setTimeout(() => {
-        discordSdk.close().catch((err) => console.error("Failed to close activity:", err));
+        Promise.resolve(discordSdk.close()).catch((err) => console.error("Failed to close activity:", err));
       }, 800);
     } else {
       showMessage(`\u274C \u6E32\u67D3\u5931\u6557\uFF1A${data.error || res.statusText}`, "error");

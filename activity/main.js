@@ -20,14 +20,14 @@ const params = new URLSearchParams(window.location.search);
 const clientId = params.get('client_id') || '1527644569133649960';
 
 // 全域錯誤監聽：若有任何 JS 運行或 Promise 錯誤，直接顯示在畫面上，方便開發排查
-window.onerror = function(message, source, lineno, colno, error) {
-    statusEl.textContent = `JS 錯誤：${message} (L${lineno})`;
-    statusEl.className = 'status status-error';
+window.onerror = function (message, source, lineno, colno, error) {
+  statusEl.textContent = `JS 錯誤：${message} (L${lineno})`;
+  statusEl.className = 'status status-error';
 };
 
-window.onunhandledrejection = function(event) {
-    statusEl.textContent = `未處理的 Rejection：${event.reason?.message || event.reason}`;
-    statusEl.className = 'status status-error';
+window.onunhandledrejection = function (event) {
+  statusEl.textContent = `未處理的 Rejection：${event.reason?.message || event.reason}`;
+  statusEl.className = 'status status-error';
 };
 
 const discordSdk = new DiscordSDK(clientId, { disableConsoleLogOverride: true });
@@ -49,25 +49,25 @@ let hs = 4.0;
 let APPROACH = 2.8 / hs;
 
 const defaultSettings = {
-    speed: 6.5,
-    touchSpeed: 7,
-    slideSpeed: 0,
-    middleDisplay: 1,
-    moviebrightness: -4,
-    showSensor: true,
-    rotateStars: true,
-    pinkStars: false,
-    middleDistance: 0.25,
-    effectDecayTime: 0.4,
-    hanabiEffectDecayTime: 0.8,
-    noteBaseSize: 11,
-    maxSlideCount: 500,
-    renderSurroundingAuxiliaryText: true,
-    slideIllegalRed: false,
-    showUI: false,
-    notPlayHoldEnd: false,
-    backgroundColor: '#0c0c1e', // 暗色系背景
-    sfxVolumes: {},
+  speed: 6.5,
+  touchSpeed: 7,
+  slideSpeed: 0,
+  middleDisplay: 1,
+  moviebrightness: -4,
+  showSensor: true,
+  rotateStars: true,
+  pinkStars: false,
+  middleDistance: 0.25,
+  effectDecayTime: 0.4,
+  hanabiEffectDecayTime: 0.8,
+  noteBaseSize: 11,
+  maxSlideCount: 500,
+  renderSurroundingAuxiliaryText: true,
+  slideIllegalRed: false,
+  showUI: false,
+  notPlayHoldEnd: false,
+  backgroundColor: '#0c0c1e', // 暗色系背景
+  sfxVolumes: {},
 };
 
 let renderer = null;
@@ -81,14 +81,14 @@ let size = 320;
 
 function resizeCanvas() {
   const leftPanel = document.querySelector('.left-panel');
-  const containerWidth = leftPanel 
-    ? leftPanel.clientWidth 
+  const containerWidth = leftPanel
+    ? leftPanel.clientWidth
     : (document.querySelector('.container').clientWidth - (window.innerWidth <= 480 ? 24 : 40));
   const maxCanvasSize = 320;
   size = Math.min(maxCanvasSize, containerWidth);
   cv.width = cv.height = size * devicePixelRatio;
   cv.style.width = cv.style.height = size + 'px';
-  
+
   draw(realTime, 0);
   if (M.length > 0) {
     drawDensity(measureIndex(realTime));
@@ -103,173 +103,173 @@ let previewStop = null;
 
 // 動態譜面前處理與密度計算
 function processChartData(decoded) {
-    const bpm = decoded.bpm || 60;
-    const firstBpm = decoded.tags.find(t => t.type === 'bpm')?.value || bpm;
-    const measureDuration = 240 / firstBpm;
-    const endTime = decoded.endTime || 0;
+  const bpm = decoded.bpm || 60;
+  const firstBpm = decoded.tags.find(t => t.type === 'bpm')?.value || bpm;
+  const measureDuration = 240 / firstBpm;
+  const endTime = decoded.endTime || 0;
 
-    // 計算小節刻度 (M)
-    const M_arr = [];
-    const offset = measureDuration; // maimai 譜面第一小節為偏置 (1 measure)
-    for (let t = offset; t <= endTime + measureDuration; t += measureDuration) {
-        M_arr.push(t);
-    }
-    if (M_arr.length === 0) {
-        M_arr.push(offset);
-    }
+  // 計算小節刻度 (M)
+  const M_arr = [];
+  const offset = measureDuration; // maimai 譜面第一小節為偏置 (1 measure)
+  for (let t = offset; t <= endTime + measureDuration; t += measureDuration) {
+    M_arr.push(t);
+  }
+  if (M_arr.length === 0) {
+    M_arr.push(offset);
+  }
 
-    // 計算密度圖 (D)
-    const D_arr = Array.from({ length: M_arr.length }, () => ({
-        tap: 0, hold: 0, slide: 0, touch: 0, brk: 0
-    }));
+  // 計算密度圖 (D)
+  const D_arr = Array.from({ length: M_arr.length }, () => ({
+    tap: 0, hold: 0, slide: 0, touch: 0, brk: 0
+  }));
 
-    for (const n of decoded.notes) {
-        let idx = 0;
-        for (let i = 0; i < M_arr.length; i++) {
-            if (n.time >= M_arr[i]) {
-                idx = i;
-            } else {
-                break;
-            }
-        }
-        
-        const type = n.type; // 'tap', 'hold', 'slide', 'touch'
-        const isBreak = n.isBreak; // boolean
-        
-        if (isBreak) {
-            D_arr[idx].brk++;
-        } else if (type === 'tap') {
-            D_arr[idx].tap++;
-        } else if (type === 'hold') {
-            D_arr[idx].hold++;
-        } else if (type === 'slide') {
-            D_arr[idx].slide++;
-        } else if (type === 'touch') {
-            D_arr[idx].touch++;
-        }
+  for (const n of decoded.notes) {
+    let idx = 0;
+    for (let i = 0; i < M_arr.length; i++) {
+      if (n.time >= M_arr[i]) {
+        idx = i;
+      } else {
+        break;
+      }
     }
 
-    return {
-        meta: {
-            bpm: firstBpm,
-            total: decoded.notes.length,
-            counts: decoded.notesConts || {
-                tap: decoded.notes.filter(n => n.type === 'tap' && !n.isBreak).length,
-                hold: decoded.notes.filter(n => n.type === 'hold' && !n.isBreak).length,
-                slide: decoded.notes.filter(n => n.type === 'slide' && !n.isBreak).length,
-                touch: decoded.notes.filter(n => n.type === 'touch' && !n.isBreak).length,
-                break: decoded.notes.filter(n => n.isBreak).length,
-            },
-            endTime: endTime
-        },
-        measures: M_arr,
-        density: D_arr,
-        notes: decoded.notes,
-        tags: decoded.tags
-    };
+    const type = n.type; // 'tap', 'hold', 'slide', 'touch'
+    const isBreak = n.isBreak; // boolean
+
+    if (isBreak) {
+      D_arr[idx].brk++;
+    } else if (type === 'tap') {
+      D_arr[idx].tap++;
+    } else if (type === 'hold') {
+      D_arr[idx].hold++;
+    } else if (type === 'slide') {
+      D_arr[idx].slide++;
+    } else if (type === 'touch') {
+      D_arr[idx].touch++;
+    }
+  }
+
+  return {
+    meta: {
+      bpm: firstBpm,
+      total: decoded.notes.length,
+      counts: decoded.notesConts || {
+        tap: decoded.notes.filter(n => n.type === 'tap' && !n.isBreak).length,
+        hold: decoded.notes.filter(n => n.type === 'hold' && !n.isBreak).length,
+        slide: decoded.notes.filter(n => n.type === 'slide' && !n.isBreak).length,
+        touch: decoded.notes.filter(n => n.type === 'touch' && !n.isBreak).length,
+        break: decoded.notes.filter(n => n.isBreak).length,
+      },
+      endTime: endTime
+    },
+    measures: M_arr,
+    density: D_arr,
+    notes: decoded.notes,
+    tags: decoded.tags
+  };
 }
 
 async function setup() {
-    console.log('[Activity] 開始初始化...');
-    statusEl.textContent = '連線中：正在初始化 SDK…';
-    statusEl.className = 'status status-connecting';
-    await discordSdk.ready();
-    console.log('[Activity] SDK 初始化完成，正在申請授權...');
+  console.log('[Activity] 開始初始化...');
+  statusEl.textContent = '連線中：正在初始化 SDK…';
+  statusEl.className = 'status status-connecting';
+  await discordSdk.ready();
+  console.log('[Activity] SDK 初始化完成，正在申請授權...');
 
-    statusEl.textContent = '連線中：正在向用戶端申請授權…';
-    const { code } = await discordSdk.commands.authorize({
-        client_id: clientId,
-        response_type: 'code',
-        state: '',
-        prompt: 'none',
-        scope: ['identify'],
-    });
-    console.log('[Activity] 授權成功，code:', code);
+  statusEl.textContent = '連線中：正在向用戶端申請授權…';
+  const { code } = await discordSdk.commands.authorize({
+    client_id: clientId,
+    response_type: 'code',
+    state: '',
+    prompt: 'none',
+    scope: ['identify'],
+  });
+  console.log('[Activity] 授權成功，code:', code);
 
-    statusEl.textContent = '連線中：正在與本地後端交換 Token…';
-    const res = await fetch('/.proxy/api/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-    });
-    if (!res.ok) throw new Error(`token 交換失敗：${res.status}`);
-    const { access_token } = await res.json();
-    console.log('[Activity] Token 交換成功，正在驗證身分...');
+  statusEl.textContent = '連線中：正在與本地後端交換 Token…';
+  const res = await fetch('/.proxy/api/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) throw new Error(`token 交換失敗：${res.status}`);
+  const { access_token } = await res.json();
+  console.log('[Activity] Token 交換成功，正在驗證身分...');
 
-    statusEl.textContent = '連線中：正在進行用戶身份驗證…';
-    auth = await discordSdk.commands.authenticate({ access_token });
-    console.log('[Activity] 身分驗證成功，使用者:', auth.user.username);
+  statusEl.textContent = '連線中：正在進行用戶身份驗證…';
+  auth = await discordSdk.commands.authenticate({ access_token });
+  console.log('[Activity] 身分驗證成功，使用者:', auth.user.username);
 
-    statusEl.textContent = '連線中：正在獲取譜面資料…';
-    const chartRes = await fetch('/.proxy/api/chart');
-    if (!chartRes.ok) throw new Error(`譜面獲取失敗：${chartRes.status}`);
-    const chartData = await chartRes.json();
-    console.log('[Activity] 譜面獲取成功:', chartData.name);
+  statusEl.textContent = '連線中：正在獲取譜面資料…';
+  const chartRes = await fetch('/.proxy/api/chart');
+  if (!chartRes.ok) throw new Error(`譜面獲取失敗：${chartRes.status}`);
+  const chartData = await chartRes.json();
+  console.log('[Activity] 譜面獲取成功:', chartData.name);
 
-    chartText = chartData.text;
-    songTitleEl.textContent = chartData.name;
+  chartText = chartData.text;
+  songTitleEl.textContent = chartData.name;
 
-    statusEl.textContent = '連線中：正在解析譜面…';
-    const decoded = simaiDecode(chartText, true);
-    if (decoded.failed) {
-        throw new Error('譜面解析失敗：請檢查語法');
+  statusEl.textContent = '連線中：正在解析譜面…';
+  const decoded = simaiDecode(chartText, true);
+  if (decoded.failed) {
+    throw new Error('譜面解析失敗：請檢查語法');
+  }
+  console.log('[Activity] 譜面解析成功');
+
+  statusEl.textContent = '連線中：正在載入圖片與字型素材…';
+  images = await loadAllImages();
+  try {
+    const blob = await (async () => {
+      try {
+        return await (await fetch('Skin/outline.png')).blob();
+      } catch {
+        return null;
+      }
+    })();
+    if (blob) {
+      outlineImage = await createImageBitmap(blob);
     }
-    console.log('[Activity] 譜面解析成功');
+  } catch (e) {
+    console.error('Failed to load outline image:', e);
+  }
+  await document.fonts.ready;
 
-    statusEl.textContent = '連線中：正在載入圖片與字型素材…';
-    images = await loadAllImages();
-    try {
-        const blob = await (async () => {
-            try {
-                return await (await fetch('Skin/outline.png')).blob();
-            } catch {
-                return null;
-            }
-        })();
-        if (blob) {
-            outlineImage = await createImageBitmap(blob);
-        }
-    } catch (e) {
-        console.error('Failed to load outline image:', e);
-    }
-    await document.fonts.ready;
+  // 初始化播放器資料與核心引擎
+  DATA = processChartData(decoded);
+  M = DATA.measures;
+  N = DATA.notes;
+  D = DATA.density;
 
-    // 初始化播放器資料與核心引擎
-    DATA = processChartData(decoded);
-    M = DATA.measures;
-    N = DATA.notes;
-    D = DATA.density;
+  renderer = new SimaiRenderer(cv, defaultSettings);
+  renderer.setImages(images);
+  renderer.setContext(ctx);
+  logic = new SimaiLogicControler();
 
-    renderer = new SimaiRenderer(cv, defaultSettings);
-    renderer.setImages(images);
-    renderer.setContext(ctx);
-    logic = new SimaiLogicControler();
+  // 更新 UI 文字
+  $('hudBpm').textContent = Math.round(DATA.meta.bpm);
+  $('hudMeasureMax').textContent = M.length - 1;
+  $('hudComboMax').textContent = N.length;
+  const c = DATA.meta.counts;
+  metaLineEl.textContent = `TAP ${c.tap} · HOLD ${c.hold} · SLIDE ${c.slide} · TOUCH ${c.touch} · BREAK ${c.break} — ALL ${DATA.meta.total}`;
 
-    // 更新 UI 文字
-    $('hudBpm').textContent = Math.round(DATA.meta.bpm);
-    $('hudMeasureMax').textContent = M.length - 1;
-    $('hudComboMax').textContent = N.length;
-    const c = DATA.meta.counts;
-    metaLineEl.textContent = `TAP ${c.tap} · HOLD ${c.hold} · SLIDE ${c.slide} · TOUCH ${c.touch} · BREAK ${c.break} — ALL ${DATA.meta.total}`;
+  // 更新 Sliders 範圍與最大值
+  slider.max = M.length - 1;
+  const maxCombo = N.length - 1;
+  rA.max = rB.max = maxCombo;
+  rA.value = 0;
+  rB.value = maxCombo;
+  range.start = 0;
+  range.end = maxCombo;
 
-    // 更新 Sliders 範圍與最大值
-    slider.max = M.length - 1;
-    const maxCombo = N.length - 1;
-    rA.max = rB.max = maxCombo;
-    rA.value = 0;
-    rB.value = maxCombo;
-    range.start = 0;
-    range.end = maxCombo;
+  // 啟用控制 UI
+  setInputsDisabled(false);
 
-    // 啟用控制 UI
-    setInputsDisabled(false);
+  statusEl.textContent = `連線成功：${auth.user.global_name ?? auth.user.username}`;
+  statusEl.className = 'status status-ready';
 
-    statusEl.textContent = `連線成功：${auth.user.global_name ?? auth.user.username}`;
-    statusEl.className = 'status status-ready';
-
-    resizeCanvas();
-    syncRange();
-    seek(0);
+  resizeCanvas();
+  syncRange();
+  seek(0);
 }
 
 // ---------- 小節導航與 Seek 運算 ----------
@@ -340,7 +340,7 @@ function drawDensity(playheadMi) {
   const bw = w / M.length;
   const maxD = Math.max(1, ...D.map(d => d.tap + d.hold + d.slide + d.touch + d.brk));
   const order = [['tap', '--tap'], ['hold', '--hold'], ['slide', '--slide'], ['touch', '--touch'], ['brk', '--brk']];
-  
+
   D.forEach((d, i) => {
     let y = h;
     order.forEach(([k, varName]) => {
@@ -377,7 +377,7 @@ function currentComboIndex() {
 
 function syncRange() {
   range.start = Math.min(+rA.value, +rB.value);
-  range.end   = Math.max(+rA.value, +rB.value);
+  range.end = Math.max(+rA.value, +rB.value);
   $('rangeLabel').textContent = `Combo ${range.start} - ${range.end}`;
   drawDensity(measureIndex(realTime));
 }
@@ -442,7 +442,7 @@ $('exportGifBtn').onclick = async () => {
     if (res.ok) {
       showMessage('✅ 請求成功！正在關閉視窗並在頻道中開始渲染…', 'success');
       setTimeout(() => {
-        discordSdk.close().catch(err => console.error("Failed to close activity:", err));
+        Promise.resolve(discordSdk.close()).catch(err => console.error("Failed to close activity:", err));
       }, 800);
     } else {
       showMessage(`❌ 渲染失敗：${data.error || res.statusText}`, 'error');
@@ -486,11 +486,11 @@ function draw(t, dt = 0) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = defaultSettings.backgroundColor;
   ctx.fillRect(0, 0, cv.width, cv.height);
-  
+
   // 2. 套用 Maimai 縮放並置中
   const p = size * devicePixelRatio / scaleBase * renderer.scale;
   ctx.setTransform(p, 0, 0, p, cv.width / 2, cv.height / 2);
-  
+
   // 3. 繪製框線圖
   if (outlineImage) {
     ctx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
@@ -545,7 +545,7 @@ function setInputsDisabled(disabled) {
   $('speedSel').disabled = disabled;
   $('hsSlider').disabled = disabled;
   slider.disabled = disabled;
-  
+
   rA.disabled = disabled;
   rB.disabled = disabled;
   $('setStart').disabled = disabled;
@@ -561,7 +561,7 @@ function showMessage(text, type) {
 }
 
 setup().catch((e) => {
-    console.error(e);
-    statusEl.textContent = `初始化失敗：${e.message}`;
-    statusEl.className = 'status status-error';
+  console.error(e);
+  statusEl.textContent = `初始化失敗：${e.message}`;
+  statusEl.className = 'status status-error';
 });
