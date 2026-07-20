@@ -19,6 +19,7 @@
   --hold: #ffd23e;        /* each 黃 → hold */
   --touch: #52e0a0;
   --brk: #ff8a1e;         /* break 橘 */
+  --mine: #737373;        /* 地雷灰（選取範圍標記用） */
   --play: #ff4fa5;
 }
 
@@ -556,7 +557,7 @@ header .sub {
   height: 5px;
   transform: translateY(-50%);
   border-radius: 3px;
-  background: linear-gradient(90deg, var(--slide), var(--tap));
+  background: var(--mine);
   pointer-events: none;
 }
 
@@ -589,7 +590,7 @@ header .sub {
   margin-top: -5px;
   border-radius: 50%;
   background: #fff;
-  border: 3px solid var(--slide);
+  border: 3px solid var(--mine);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
   cursor: ew-resize;
   transition: transform .12s ease;
@@ -602,7 +603,7 @@ header .sub {
   height: 13px;
   border-radius: 50%;
   background: #fff;
-  border: 3px solid var(--slide);
+  border: 3px solid var(--mine);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
   cursor: ew-resize;
   transition: transform .12s ease;

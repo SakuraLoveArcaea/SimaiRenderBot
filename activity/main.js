@@ -539,14 +539,14 @@ function drawDensity(playheadMi) {
     });
   });
 
-  // 選取範圍高亮
+  // 選取範圍高亮（地雷灰）
   if (typeof range !== 'undefined' && N.length > 0) {
     const startM = measureIndex(N[range.start]?.time || 0);
     const endM = measureIndex(N[range.end]?.time || 0);
-    dctx.fillStyle = rangeOverLimit ? 'rgba(242, 63, 67, 0.16)' : 'rgba(255, 255, 255, 0.13)';
+    dctx.fillStyle = rangeOverLimit ? 'rgba(242, 63, 67, 0.16)' : 'rgba(115, 115, 115, 0.25)';
     dctx.fillRect(startM * bw, 0, (endM - startM + 1) * bw, h);
     // 區間過長時兩條端點線轉紅，取代原本的文字警告
-    dctx.fillStyle = rangeOverLimit ? OVER_LIMIT_COLOR : css('--slide');
+    dctx.fillStyle = rangeOverLimit ? OVER_LIMIT_COLOR : css('--mine');
     dctx.fillRect(startM * bw, 0, 2, h);
     dctx.fillRect((endM + 1) * bw - 2, 0, 2, h);
   }
