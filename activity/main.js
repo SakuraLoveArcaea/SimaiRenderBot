@@ -1,7 +1,7 @@
 import { DiscordSDK } from '@discord/embedded-app-sdk';
 import { simaiDecode } from '../web/Scripts/decode.js';
 import { SimaiRenderer } from '../web/Scripts/renderer.js';
-import { loadAllImages, SimaiLogicControler, scaleBase } from '../web/Scripts/helper.js';
+import { loadAllImages, SimaiLogicControler, scaleBase, audioManager } from '../web/Scripts/helper.js';
 
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -68,6 +68,7 @@ let playing = false;
 let realTime = 0;
 let lastTs = 0;
 let speed = 1.0;
+let sfxVolume = 0.5; // SFX 音量（0.0 - 1.0）
 let dragging = false;
 let hs = 4.0;
 let APPROACH = 2.8 / hs;
@@ -240,8 +241,14 @@ async function setup() {
   }
   console.log('[Activity] 譜面解析成功');
 
-  statusEl.textContent = '連線中：正在載入圖片與字型素材…';
+  statusEl.textContent = '連線中：正在載入圖片與音效素材…';
   images = await loadAllImages();
+
+  // 同步載入音效（與圖片並行）
+  await audioManager.init((pct) => {
+    statusEl.textContent = `連線中：正在載入音效… ${Math.round(pct)}%`;
+  }).catch(e => console.warn('[Audio] 音效載入部分失敗:', e));
+  audioManager.setSFXVolume(sfxVolume);
   try {
     const blob = await (async () => {
       try {
@@ -308,6 +315,9 @@ function measureIndex(t) {
 
 function seek(t) {
   realTime = Math.max(0, Math.min(DATA.meta.endTime, t));
+  // Seek 時清空音效佇列，避免舊音效在新時間點爆出
+  audioManager.soundQueue = [];
+  audioManager.stopAllScheduledSounds();
   syncUI();
   draw(realTime);
 }
@@ -338,6 +348,11 @@ playBtn.onclick = () => {
   if (!playing) previewStop = null;
   playBtn.textContent = playing ? '⏸' : '▶';
   if (playing) {
+    // 解鎖瀏覽器 AudioContext（需要使用者互動才能啟動）
+    audioManager.ensureContextSync();
+    if (audioManager.ctx?.state === 'suspended') {
+      audioManager.ctx.resume().catch(() => {});
+    }
     lastTs = performance.now();
     requestAnimationFrame(loop);
   }
@@ -464,6 +479,13 @@ $('hsSlider').addEventListener('input', e => {
   draw(realTime, 0);
 });
 
+// ---------- 音效音量控制 ----------
+$('sfxSlider').addEventListener('input', e => {
+  sfxVolume = +e.target.value;
+  $('sfxVal').textContent = Math.round(sfxVolume * 100) + '%';
+  audioManager.setSFXVolume(sfxVolume);
+});
+
 // ---------- GIF 渲染並傳送 ----------
 $('exportGifBtn').onclick = async () => {
   // 前端防護：空區間檢查
@@ -538,7 +560,7 @@ function draw(t, dt = 0) {
     decodedTags: DATA.tags || [],
     playScoreRes,
     nowIndex: nowIndexLocal,
-    skipAudioQueue: true,
+    skipAudioQueue: !playing, // 播放中才觸發音效佇列
   });
   nowIndexLocal = updatedNowIndex;
 
@@ -591,6 +613,8 @@ function loop(ts) {
   }
   syncUI();
   draw(realTime, dt);
+  // 音效更新：處理佇列中等待播放的音效
+  audioManager.update(realTime);
   if (playing) requestAnimationFrame(loop);
 }
 

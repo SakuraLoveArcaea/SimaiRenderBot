@@ -12391,6 +12391,7 @@ var playing = false;
 var realTime = 0;
 var lastTs = 0;
 var speed = 1;
+var sfxVolume = 0.5;
 var dragging = false;
 var hs = 4;
 var APPROACH = 2.8 / hs;
@@ -12541,8 +12542,12 @@ async function setup() {
     throw new Error("\u8B5C\u9762\u89E3\u6790\u5931\u6557\uFF1A\u8ACB\u6AA2\u67E5\u8A9E\u6CD5");
   }
   console.log("[Activity] \u8B5C\u9762\u89E3\u6790\u6210\u529F");
-  statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u8F09\u5165\u5716\u7247\u8207\u5B57\u578B\u7D20\u6750\u2026";
+  statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u8F09\u5165\u5716\u7247\u8207\u97F3\u6548\u7D20\u6750\u2026";
   images = await loadAllImages();
+  await audioManager.init((pct) => {
+    statusEl.textContent = `\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u8F09\u5165\u97F3\u6548\u2026 ${Math.round(pct)}%`;
+  }).catch((e) => console.warn("[Audio] \u97F3\u6548\u8F09\u5165\u90E8\u5206\u5931\u6557:", e));
+  audioManager.setSFXVolume(sfxVolume);
   try {
     const blob = await (async () => {
       try {
@@ -12595,6 +12600,8 @@ function measureIndex(t) {
 }
 function seek(t) {
   realTime = Math.max(0, Math.min(DATA.meta.endTime, t));
+  audioManager.soundQueue = [];
+  audioManager.stopAllScheduledSounds();
   syncUI();
   draw(realTime);
 }
@@ -12620,6 +12627,11 @@ playBtn.onclick = () => {
   if (!playing) previewStop = null;
   playBtn.textContent = playing ? "\u23F8" : "\u25B6";
   if (playing) {
+    audioManager.ensureContextSync();
+    if (audioManager.ctx?.state === "suspended") {
+      audioManager.ctx.resume().catch(() => {
+      });
+    }
     lastTs = performance.now();
     requestAnimationFrame(loop);
   }
@@ -12732,6 +12744,11 @@ $("hsSlider").addEventListener("input", (e) => {
   defaultSettings.speed = newHs;
   draw(realTime, 0);
 });
+$("sfxSlider").addEventListener("input", (e) => {
+  sfxVolume = +e.target.value;
+  $("sfxVal").textContent = Math.round(sfxVolume * 100) + "%";
+  audioManager.setSFXVolume(sfxVolume);
+});
 $("exportGifBtn").onclick = async () => {
   const noteCount = range.end - range.start + 1;
   if (noteCount <= 0) {
@@ -12796,7 +12813,8 @@ function draw(t, dt = 0) {
     decodedTags: DATA.tags || [],
     playScoreRes,
     nowIndex: nowIndexLocal,
-    skipAudioQueue: true
+    skipAudioQueue: !playing
+    // 播放中才觸發音效佇列
   });
   nowIndexLocal = updatedNowIndex;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -12839,6 +12857,7 @@ function loop(ts) {
   }
   syncUI();
   draw(realTime, dt);
+  audioManager.update(realTime);
   if (playing) requestAnimationFrame(loop);
 }
 function setInputsDisabled(disabled) {
