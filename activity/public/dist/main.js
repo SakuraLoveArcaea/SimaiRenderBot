@@ -13054,6 +13054,18 @@ function draw(t, dt = 0) {
   if (outlineImage) {
     ctx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
   }
+  const startNote = N[range.start];
+  const endNote = N[range.end];
+  let origStartMine = false;
+  if (startNote) {
+    origStartMine = startNote.isMine;
+    startNote.isMine = true;
+  }
+  let origEndMine = false;
+  if (endNote && endNote !== startNote) {
+    origEndMine = endNote.isMine;
+    endNote.isMine = true;
+  }
   renderer.drawFrame({
     globalTime: t,
     buckets,
@@ -13067,6 +13079,12 @@ function draw(t, dt = 0) {
     noteQuantity,
     playScoreRes
   });
+  if (startNote) {
+    startNote.isMine = origStartMine;
+  }
+  if (endNote && endNote !== startNote) {
+    endNote.isMine = origEndMine;
+  }
 }
 function loop(ts) {
   if (!playing) return;

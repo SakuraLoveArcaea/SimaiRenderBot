@@ -914,6 +914,20 @@ function draw(t, dt = 0) {
     ctx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
   }
 
+  // 3.5 將選取範圍的端點音符暫時改為地雷屬性（使其渲染為灰色）
+  const startNote = N[range.start];
+  const endNote = N[range.end];
+  let origStartMine = false;
+  if (startNote) {
+    origStartMine = startNote.isMine;
+    startNote.isMine = true;
+  }
+  let origEndMine = false;
+  if (endNote && endNote !== startNote) {
+    origEndMine = endNote.isMine;
+    endNote.isMine = true;
+  }
+
   // 4. 繪製核心影格 (使用相同的變形矩陣)
   renderer.drawFrame({
     globalTime: t,
@@ -928,6 +942,14 @@ function draw(t, dt = 0) {
     noteQuantity,
     playScoreRes,
   });
+
+  // 4.5 還原原本的地雷屬性
+  if (startNote) {
+    startNote.isMine = origStartMine;
+  }
+  if (endNote && endNote !== startNote) {
+    endNote.isMine = origEndMine;
+  }
 }
 
 // ---------- 播放 Loop 迴圈 ----------
