@@ -37,6 +37,13 @@ export class SimaiRenderService {
         );
     }
 
+    /** 給 /chart 用：回傳 { comboTimes, endTime, bpm, indexToTime }，把 combo 序號對回譜面時間 */
+    async comboInfo(simaiText) {
+        return this.#enqueue(() =>
+            this.#page.evaluate((text) => window.chartComboInfo(text), simaiText)
+        );
+    }
+
     /** 依長度與音符數估計渲染耗時（毫秒），不用實際跑一次就能給使用者心理預期 */
     estimateRenderMs(durationSec, totalNotes) {
         return estimateRenderMs(durationSec, totalNotes);

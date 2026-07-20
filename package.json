@@ -7,10 +7,16 @@
   "scripts": {
     "render": "node src/cli.js",
     "bot": "node src/bot.js",
-    "register": "node src/register-commands.js"
+    "register": "node src/register-commands.js",
+    "build:activity": "esbuild activity/main.js --bundle --format=esm --outfile=activity/public/dist/main.js",
+    "tunnel": "cloudflared tunnel --url http://localhost:3000"
   },
   "dependencies": {
-    "discord.js": "^14.16.3",
+    "@discord/embedded-app-sdk": "^1.8.1",
+    "discord.js": "^14.27.0",
     "playwright-core": "^1.49.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
   }
 }

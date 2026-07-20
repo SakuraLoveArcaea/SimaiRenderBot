@@ -189,6 +189,106 @@ stateDiagram-v2
 
 「來源被刪」不是特例錯誤，而是收斂成 `ReplyToSource → OrphanPublic` 這條**唯一降級邊**：回覆失敗就無聲改用 `channel.send` @使用者公開貼出，不會出現「回覆原始訊息已刪除」的殘框。
 
+## Discord Activity (Embedded App 互動預覽網頁)
+
+除了 Bot 指令外，本專案亦支援透過 Discord Activity (Embedded App) 在語音或文字頻道直接開啟一個**網頁版互動譜面播放器**。
+
+### ⚙️ 他人部署/開啟 Activity 的必要設定
+
+如果要讓其他人也能開起並使用你的 Activity，必須完成以下設定：
+
+1. **公網 Tunnel (對外通道)**：
+   - Discord 用戶端只能載入 HTTPS 網址。你需要使用 `cloudflared` 將本地 `3000` 連接埠對外映射：
+     ```bash
+     npm run tunnel
+     ```
+   - 複製生成的 `https://xxx.trycloudflare.com` 網址（記為 **Tunnel URL**）。
+
+2. **Discord Developer Portal 設定**：
+   - 前往 [Developer Portal](https://discord.com/developers/applications) 進入你的 App。
+   - **OAuth2**：
+     - 在 **Redirects** 區塊點擊 **Add Redirect**，加入：
+       ```text
+       https://127.0.0.1
+       ```
+       *(此為 Discord 官方建議的靜態 Redirects，能避免 Tunnel 每次重啟換網址都需要重新設定)*。
+     - 點擊 Save Changes。
+   - **Embedded App (Activities)**：
+     - 點擊 **Get Started**。
+     - **Start URL**：填入你的 **Tunnel URL**。
+     - **URL Mappings**：點擊 **Add Mapping** 新增以下映射：
+       - **Prefix**：`/.proxy`
+       - **Target**：填入你的 **Tunnel URL**（所有對 `/.proxy` 的請求會被轉發回本地伺服器）。
+     - 點擊 Save Changes。
+
+3. **環境變數 `.env`**：
+   - 確保填寫了 `DISCORD_CLIENT_SECRET`。
+   - `DISCORD_REDIRECT_URI` 設為 `https://127.0.0.1`。
+   - `ENABLE_ACTIVITY=1`（開啟 Activity 伺服器監聽）。
+
+4. **編譯打包前端**：
+   - 每次修改 `activity/` 下的原始碼後，必須編譯打包：
+     ```bash
+     npm run build:activity
+     ```
+
+---
+
+### 🔄 `/play` 啟動與數據流 (Data Flow)
+
+當使用者在 Discord 頻道輸入 `/play`（或點擊火箭）開啟 Activity 時，系統會跑以下流程：
+
+```
++-----------------------------------------------------------------------------+
+|                               Discord 用戶端                                 |
++-----------------------------------------------------------------------------+
+   | (1) 開啟 Iframe，啟動 SDK，從 URL 參數中拿 client_id
+   v
+[activity/main.js]
+   | (2) 執行 authorize() & authenticate() 握手
+   |     --> 向本地後端 POST /.proxy/api/token 換取 access_token
+   v
+[src/activity-server.js] (後端)
+   | (3) 代理向 Discord API 交換 access_token 回傳給前端
+   v
+[activity/main.js]
+   | (4) fetch GET /.proxy/api/chart 獲取譜面資料
+   |     --> 後端從 testChart/ 讀取第一份 .simai 檔案文字回傳
+   | (5) 在前端執行 simaiDecode(text) 即時解析譜面內容
+   | (6) 執行 processChartData() 前處理並計算 measures 與 density
+   | (7) 啟動 60fps 的 requestAnimationFrame 畫布渲染循環，繪製 Canvas 軌道與 Note
+   |
+   | --- [使用者在介面上拉動範圍，決定要渲染的 GIF 區間 (例如小節 10-30)] ---
+   |
+   | (8) 點擊「🎬 渲染並傳送此區間」
+   |     --> 計算 start/end 實際秒數
+   |     --> POST /.proxy/api/render { simai, start, end, channelId, userId }
+   v
+[src/activity-server.js] (後端)
+   | (9) 調用後端 Playwright 渲染引擎：service.renderGif(simai, { start, end })
+   | (10) 產出預覽 GIF 後，由 Bot 直接發送至當前頻道，並 @ 點擊的使用者
+   v
+[Discord 聊天頻道] (Bot 發送 GIF)
+```
+
+---
+
+### 📊 數據前處理與核心運算 (Data Prep & Processing)
+
+前端在獲取到 `.simai` 譜面原文後，利用 `processChartData` 進行了以下特徵計算，以驅動 UI 與時間軸：
+
+1. **小節時間邊界計算 (Measures Calculation)**：
+   - 根據譜面解析出的第一組 `BPM`，計算出單個小節的標準時長（Measure Duration = 240 / BPM 秒）。
+   - 從初始小節偏置開始累加，建立 `measures`（小節邊界時間戳記）陣列 `M`，用以對齊時間軸刻度與進度滑桿。
+2. **音符密度統計 (Density Calculation)**：
+   - 遍歷所有解析出的 Note 物件，根據 `n.time` 判定其落在哪個小節區間 `[M[i], M[i+1])`。
+   - 依照 Note 的類型（`tap`、`hold`、`slide`、`touch`，以及 `isBreak`）累加至該小節的計數桶中，生成二維密度矩陣 `D`。
+   - 密度矩陣會傳送給下方畫布，動態繪製成柱狀密度分布圖，並由主播放進度線橫跨其上。
+3. **響應式布局與動態縮放 (Responsive Scaling)**：
+   - 頁面掛載 `resizeCanvas` 監聽器，當 Discord 用戶端調整視窗大小（如手機橫豎屏切換、側邊欄拉動）時，重新取得可用寬高，以 2D canvas 重定大小、重置座標原點 `(CX, CY)` 並重新繪製，以實現自適應跨平台相容。
+
+---
+
 ## 復讀機頻道（額外功能）
 
 指定頻道（`src/bot.js` 的 `ECHO_CHANNEL_ID`）內任何人發言，bot 會原樣重複一次，不做 simai 偵測；其他頻道不受影響。

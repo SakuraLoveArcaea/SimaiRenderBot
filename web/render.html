@@ -70,6 +70,28 @@
             };
         };
 
+        // /chart 用：每個 combo 的判定時間（升冪）。頭部類（tap/hold/touch/star）以出現時間計、
+        // slide 以最後一段的尾端判定計、地雷不算 combo——近似遊戲內的 combo 計數，拿來定位起點夠用。
+        window.chartComboInfo = (simaiText) => {
+            const d = simaiDecode(simaiText, true);
+            const times = [];
+            for (const n of (d.notes || [])) {
+                if (n.isMine) continue;
+                if (n.slideType) {
+                    if (n.lastSlide) times.push(n.time + (n.slideDelay ?? 0) + (n.slideDuration ?? 0));
+                } else {
+                    times.push(n.time);
+                }
+            }
+            times.sort((a, b) => a - b);
+            return {
+                comboTimes: times,
+                endTime: d.endTime ?? 0,
+                bpm: d.bpm ?? null,
+                indexToTime: [...(d.indexToTime || [])].map((t) => t ?? null),
+            };
+        };
+
         // 核心：simai 文字 → 逐幀渲染，每幀以 PNG(base64) 透過 __emitFrame 串回 Node，
         // 由 Node 端直接餵給 ffmpeg 轉 GIF。相較舊版跳過了 WebCodecs 的 H.264 編碼（Node 端也省了解碼），
         // 中間那一趟編碼/解碼對最終 GIF 畫質毫無幫助（畫質由調色盤量化決定），純屬浪費。

@@ -39,6 +39,22 @@ export const commands = [
         .setName('compose')
         .setDescription('跳出多行輸入視窗，整理成可複製的 simai 區塊，並可直接渲染'),
     new SlashCommandBuilder()
+        .setName('testchart')
+        .setDescription('【測試用】渲染內建測試譜面，可從指定 combo 開始播放（先預覽範圍再渲染）')
+        .addIntegerOption((o) => o
+            .setName('combo')
+            .setDescription('從第幾 combo 開始（預設 1 = 開頭）')
+            .setMinValue(1))
+        .addIntegerOption((o) => o
+            .setName('count')
+            .setDescription('渲染多少個 combo（與 duration 二選一）')
+            .setMinValue(1))
+        .addNumberOption((o) => o
+            .setName('duration')
+            .setDescription('渲染多少秒（與 count 二選一；都不填預設 10 秒，最多 30）')
+            .setMinValue(2)
+            .setMaxValue(30)),
+    new SlashCommandBuilder()
         .setName('check')
         .setDescription('檢查 simai 語法（只解析不渲染，回報錯誤與 note 統計）')
         .addStringOption((o) => o
@@ -51,19 +67,48 @@ export const commands = [
             .setName('keyboard')
             .setDescription('開啟互動鍵盤，用按鈕點出 simai 譜面'),
     ] : []),
+    // 文字頻道啟動 Activity（傳統斜線指令，在 guild 註冊可即時生效）
+    ...(process.env.ENABLE_ACTIVITY === '1' ? [
+        new SlashCommandBuilder()
+            .setName('play')
+            .setDescription('在文字頻道啟動互動 Activity 頁面'),
+    ] : []),
     // 右鍵訊息 → Apps → 渲染譜面：抓訊息裡的 ```simai code block 來渲染
     new ContextMenuCommandBuilder()
         .setName('渲染譜面')
         .setType(ApplicationCommandType.Message),
 ].map((c) => c.toJSON());
 
-const rest = new REST().setToken(token);
-const guildId = process.env.DISCORD_GUILD_ID;
+// /activity（暫定名字，之後會改）：Primary Entry Point 指令，沒有 builder 支援，直接寫 raw JSON。
+// handler = DiscordLaunchActivity：Discord 收到指令會直接幫忙開啟 Activity，我們的 bot 完全不會收到這次 interaction。
+if (process.env.ENABLE_ACTIVITY === '1') {
+    commands.push({
+        type: ApplicationCommandType.PrimaryEntryPoint,
+        name: 'activity',
+        description: '（測試用）開啟互動頁面',
+        handler: 2, // EntryPointCommandHandlerType.DiscordLaunchActivity
+    });
+}
 
-if (guildId) {
-    // 測試用：註冊到單一伺服器（即時生效）
-    await rest.put(Routes.applicationGuildCommands(appId, guildId), { body: commands });
-    console.log(`已註冊 ${commands.length} 個指令到伺服器 ${guildId}`);
+const rest = new REST().setToken(token);
+// 可填單一 ID 或用逗號分隔多個 ID，例如 111,222
+const guildIds = (process.env.DISCORD_GUILD_ID ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
+// PRIMARY_ENTRY_POINT（/activity）Discord 規定只能全域註冊，不能跟著 guild 指令一起 PUT 進 guild endpoint。
+const entryPointCommands = commands.filter((c) => c.type === ApplicationCommandType.PrimaryEntryPoint);
+const guildCommands = commands.filter((c) => c.type !== ApplicationCommandType.PrimaryEntryPoint);
+
+if (guildIds.length) {
+    // 測試用／指定伺服器：一般指令只在列出的伺服器註冊（即時生效）
+    for (const guildId of guildIds) {
+        await rest.put(Routes.applicationGuildCommands(appId, guildId), { body: guildCommands });
+        console.log(`已註冊 ${guildCommands.length} 個指令到伺服器 ${guildId}`);
+    }
+    if (entryPointCommands.length) {
+        // 規定只能全域，跟 guild 指令的即時生效脫鉤，可能要等一段時間才在 Discord 用戶端出現
+        await rest.put(Routes.applicationCommands(appId), { body: entryPointCommands });
+        console.log(`已全域註冊 ${entryPointCommands.length} 個 Entry Point 指令（PRIMARY_ENTRY_POINT 規定只能全域，不受 GUILD_ID 限制，生效可能較慢）`);
+    }
 } else {
     // 正式：全域註冊（最多等 1 小時生效）
     await rest.put(Routes.applicationCommands(appId), { body: commands });
