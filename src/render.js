@@ -56,7 +56,10 @@ export class SimaiRenderService {
     async renderGif(simaiText, opts = {}) {
         return this.#enqueue(async () => {
             const {
-                width = 480,
+                // 16:9 寬版輸出：譜面本身是正方形、置中，左右留背景色。
+                // 目的是讓 GIF 在 Discord 版面上不要佔掉那麼多垂直空間。
+                width = 960,
+                height = 540,
                 start = 0,
                 end = null,
                 maxDuration = 30,
@@ -70,7 +73,7 @@ export class SimaiRenderService {
             try {
                 result = await this.#page.evaluate(
                     ([text, o]) => window.renderChartToFrames(text, o),
-                    [simaiText, { width, height: width, fps: RENDER_FPS, start, end, maxDuration }]
+                    [simaiText, { width, height, fps: RENDER_FPS, start, end, maxDuration }]
                 );
             } finally {
                 this.#frameSink = null;
@@ -82,11 +85,14 @@ export class SimaiRenderService {
 
             // 壓縮階梯：fps 固定在 15（流暢度優先，不妥協），
             // 大小主要靠色數 / 寬度 / dither 妥協，最後一級才不得已降 fps。
+            // 註：width 是「整張 16:9 畫面」的寬度，譜面只佔中間 9/16，
+            // 所以這裡的數字比舊版正方形輸出大，換算後譜面實際像素才相當
+            //（例如 640 寬 → 360 高 → 譜面 360px，等同舊版 360 正方形）。
             const ladder = [
-                { fps: 15, width: 360, colors: 64, bayerScale: 3 },
-                { fps: 15, width: 320, colors: 48, bayerScale: 4 },
-                { fps: 15, width: 280, colors: 32, bayerScale: 5 },
-                { fps: 12, width: 240, colors: 24, bayerScale: 5 },
+                { fps: 15, width: 640, colors: 64, bayerScale: 3 },
+                { fps: 15, width: 560, colors: 48, bayerScale: 4 },
+                { fps: 15, width: 480, colors: 32, bayerScale: 5 },
+                { fps: 12, width: 400, colors: 24, bayerScale: 5 },
             ];
 
             let gifBuf = null;

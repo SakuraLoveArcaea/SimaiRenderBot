@@ -4,8 +4,9 @@ import {
 } from 'discord.js';
 import { SimaiRenderService } from './render.js';
 import { KB_PREFIX, handleKeyboardCommand, handleKeyboardComponent } from './keyboard.js';
-import { loadChart, sliceSource } from './chart.js';
-import { startActivityServer } from './activity-server.js';
+import { loadChart, sliceSource, analyzeHeader } from './chart.js';
+import { startActivityServer, RESUME_BTN_PREFIX } from './activity-server.js';
+import { saveResumeSession } from './resume.js';
 
 try { process.loadEnvFile(new URL('../.env', import.meta.url).pathname); } catch { }
 
@@ -90,6 +91,9 @@ client.on('interactionCreate', async (interaction) => {
         }
         if (interaction.isButton() && interaction.customId.startsWith(FIX_HEADER_PREFIX)) {
             return await handleFixHeaderButton(interaction);
+        }
+        if (interaction.isButton() && interaction.customId.startsWith(RESUME_BTN_PREFIX)) {
+            return await handleResumeButton(interaction);
         }
     } catch (e) {
         console.error(e);
@@ -590,16 +594,6 @@ const FIX_HEADER_PREFIX = 'compose:fixheader:';
 const FIX_HEADER_MODAL_ID = 'compose:fixheader:modal';
 
 /** 分別偵測開頭的 BPM `(N)` 與分拍 `{N}`（順序不拘，decode 兩種都吃）。 */
-function analyzeHeader(simaiText) {
-    let s = (simaiText ?? '').replace(/\|\|.*$/gm, '').replace(/\s+/g, '');
-    let hasBpm = false, hasSplit = false, m;
-    while ((m = s.match(/^\([^()]*\)/)) || (m = s.match(/^\{[^{}]*\}/))) {
-        if (m[0][0] === '(') hasBpm = true; else hasSplit = true;
-        s = s.slice(m[0].length);
-    }
-    return { hasBpm, hasSplit };
-}
-
 function hasLeadingHeader(simaiText) {
     const { hasBpm, hasSplit } = analyzeHeader(simaiText);
     return hasBpm && hasSplit;
@@ -626,6 +620,21 @@ function missingHeaderComponents(userId) {
 function missingHeaderReply(userId, simaiText, source = null) {
     composeDrafts.set(userId, { text: simaiText, createdAt: Date.now(), source });
     return { content: missingHeaderMessage(simaiText), components: missingHeaderComponents(userId) };
+}
+
+/**
+ * 點「▶ 繼續看譜」：把該片段的 combo 區間記下來，然後開啟 Activity。
+ * Discord 的 launchActivity() 不能夾帶參數，所以位置改走伺服器端暫存——
+ * Activity 啟動、驗證完身分後會用自己的 user id 來 /api/resume 取回（見 activity-server.js）。
+ * 任何人都能點（等於「我也想看這段」），各自的續看位置以 user id 分開存。
+ */
+async function handleResumeButton(interaction) {
+    const [, startStr, endStr] = interaction.customId.split(':');
+    saveResumeSession(interaction.user.id, {
+        startCombo: Number(startStr) || 0,
+        endCombo: Number(endStr) || 0,
+    });
+    await interaction.launchActivity();
 }
 
 /** 點「✏️ 補上開頭」：智能判斷缺什麼，只顯示缺的欄位（BPM／分拍），並帶出原本 simai */

@@ -2,7 +2,12 @@ import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadChart } from './chart.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { loadChart, buildCleanCutSimai } from './chart.js';
+import { takeResumeSession } from './resume.js';
+
+/** 「繼續看譜」按鈕的 customId 前綴，bot.js 會依這個前綴接手處理 */
+export const RESUME_BTN_PREFIX = 'resume:';
 
 const PUBLIC_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'activity', 'public');
 const WEB_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
@@ -19,6 +24,7 @@ const MIME = {
 const renderCooldowns = new Map();
 const RENDER_COOLDOWN_MS = 60_000; // 60 秒冷卻
 const SIMAI_MAX_BYTES = 200_000;   // 200KB 大小上限
+const MAX_RENDER_SEC = 30;         // 單次最長渲染秒數（與前端提示一致）
 
 /**
  * Discord Activity 的後端：靜態頁面 + OAuth token 交換 + 渲染通知。
@@ -49,6 +55,12 @@ export function startActivityServer(client, service) {
             if (req.method === 'GET' && url.pathname === '/api/chart') {
                 console.log('[Activity Server] 收到獲取譜面請求');
                 return await handleGetChart(req, res);
+            }
+            if (req.method === 'POST' && url.pathname === '/api/debug-log') {
+                return await handleDebugLog(req, res);
+            }
+            if (req.method === 'GET' && url.pathname === '/api/resume') {
+                return handleResume(url, res);
             }
             if (req.method === 'GET') {
                 return await handleStatic(url.pathname, res);
@@ -105,6 +117,34 @@ async function readJsonBody(req) {
     return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
 }
 
+/**
+ * 除錯用：前端用 navigator.sendBeacon 回報生命週期事件與錯誤，直接印在後端終端機。
+ * 用途是排查手機 Discord App 內建 WebView 不開放遠端除錯（Safari Web Inspector 看不到）
+ * 時，Activity 被強制關閉前最後執行到哪一步。刻意做到極簡、不會拋錯，不影響主流程。
+ */
+async function handleDebugLog(req, res) {
+    try {
+        const raw = await readRawBody(req);
+        const { event, data, ts, ua } = JSON.parse(raw || '{}');
+        console.log(`[Activity DEBUG] ${ts ?? new Date().toISOString()} | ${event ?? '(no event)'} |`, data ?? '', ua ? `| UA: ${ua}` : '');
+    } catch (e) {
+        console.warn('[Activity DEBUG] 解析除錯訊息失敗:', e.message);
+    }
+    res.writeHead(204).end();
+}
+
+/** 秒數 → m:ss */
+function formatTime(sec) {
+    const s = Math.max(0, Math.round(sec));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+async function readRawBody(req) {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    return Buffer.concat(chunks).toString('utf8');
+}
+
 /** 前端拿 authorize() 給的 code 換 access_token（client_secret 只能留在後端，不能進前端 bundle） */
 async function handleToken(req, res, appId, clientSecret) {
     if (!clientSecret) {
@@ -156,7 +196,12 @@ async function handleNotify(req, res, client) {
 
 /** 互動頁面渲染請求：呼叫渲染引擎產出 GIF 並發到對應頻道 */
 async function handleRender(req, res, client, service) {
-    const { channelId, userId, username, simai, startCombo, endCombo } = await readJsonBody(req);
+    const { channelId, userId, username, simai, startCombo, endCombo, chartName, cleanCut } = await readJsonBody(req);
+
+    // 「切的乾淨」：把選取範圍從 simai 原始碼切出來成一段獨立譜面（切到 hold／slide
+    // 中間也照切），並補回開頭的 BPM／分音再送去渲染。關閉時沿用舊做法：送整份譜面
+    // 加上起訖時間，由渲染器只畫那一段。預設開啟。
+    const exact = cleanCut !== false;
 
     // 1. 基本欄位檢查
     if (!channelId || !simai) {
@@ -202,7 +247,8 @@ async function handleRender(req, res, client, service) {
 
     try {
         // 利用 comboInfo 來解析並換算開始與結束時間
-        const { comboTimes, endTime } = await service.comboInfo(simai);
+        const info = await service.comboInfo(simai);
+        const { comboTimes, endTime } = info;
 
         // 5. Combo 索引越界 Clamp
         const safeStart = Math.max(0, Math.min(Math.floor(startCombo), comboTimes.length - 1));
@@ -234,14 +280,35 @@ async function handleRender(req, res, client, service) {
         // 在背景非同步執行實際渲染與傳送
         (async () => {
             try {
-                const renderOpts = { maxDuration: 30, start, end };
-                const { gif } = await service.renderGif(simai, renderOpts);
+                // 切的乾淨：先把片段切出來（含補回開頭的 BPM／分音），整段從頭渲染；
+                // 否則沿用舊做法，送整份譜面並指定起訖時間。
+                const renderText = exact
+                    ? buildCleanCutSimai(simai, info, start, comboTimes[safeEnd] ?? endTime)
+                    : simai;
+                const renderOpts = exact
+                    ? { maxDuration: MAX_RENDER_SEC }
+                    : { maxDuration: MAX_RENDER_SEC, start, end };
+                const { gif } = await service.renderGif(renderText, renderOpts);
+
+                const truncated = end - start > MAX_RENDER_SEC;
+                // 超過上限的部分沒有畫進 GIF，段落時間要照實際渲染到的範圍顯示
+                const shownEnd = Math.min(end, start + MAX_RENDER_SEC);
+                const truncNote = truncated ? `（超過 ${MAX_RENDER_SEC}s，只渲染前 ${MAX_RENDER_SEC} 秒）` : '';
+
+                // 歌名 ＋ 段落（combo 區間與對應的時間）
+                const segment = `Combo ${safeStart}–${safeEnd}（${formatTime(start)}–${formatTime(shownEnd)}）`;
+                const title = chartName ? `**${chartName}**　` : '';
+
+                // 「繼續看譜」：帶著這段的 combo 區間，點下去會開啟 Activity 並還原到同一位置
+                const resumeBtn = new ButtonBuilder()
+                    .setCustomId(`${RESUME_BTN_PREFIX}${safeStart}:${safeEnd}`)
+                    .setLabel('▶ 繼續看譜')
+                    .setStyle(ButtonStyle.Primary);
 
                 await channel.send({
-                    content: userId
-                        ? `<@${userId}>（${username ?? '未知'}）的譜面預覽 GIF 渲染完成：`
-                        : `🎬 譜面預覽 GIF 渲染完成：`,
+                    content: `${userId ? `<@${userId}> ` : ''}🎬 ${title}${segment}${truncNote}`,
                     files: [{ attachment: gif, name: 'render.gif' }],
+                    components: [new ActionRowBuilder().addComponents(resumeBtn)],
                     allowedMentions: userId ? { users: [userId] } : undefined,
                 });
             } catch (e) {
@@ -261,6 +328,18 @@ async function handleRender(req, res, client, service) {
         if (userId) renderCooldowns.delete(userId);
         res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: e.message || String(e) }));
     }
+}
+
+/**
+ * Activity 開啟時來問「有沒有要續看的位置」。
+ * 使用者按下訊息上的「繼續看譜」時，bot.js 會先把區間存起來（見 resume.js），
+ * 這裡以 Activity 驗證過的使用者 id 取回，取一次就清掉。
+ */
+function handleResume(url, res) {
+    const userId = url.searchParams.get('userId');
+    const session = userId ? takeResumeSession(userId) : null;
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify(session ?? {}));
 }
 
 /** 獲取內建的 testChart 譜面資料 */

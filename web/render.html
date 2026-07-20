@@ -47,7 +47,9 @@
             hanabiEffectDecayTime: 0.8,
             noteBaseSize: 11,
             maxSlideCount: 500,
-            renderSurroundingAuxiliaryText: true,
+            // 譜面周圍的輔助文字（時間、DELUXE Rate、各類 note 計數、Powered by）不畫，
+            // 片段資訊改由 Discord 訊息的 embed 呈現
+            renderSurroundingAuxiliaryText: false,
             slideIllegalRed: false,
             showUI: false,
             notPlayHoldEnd: false,
@@ -89,6 +91,10 @@
                 endTime: d.endTime ?? 0,
                 bpm: d.bpm ?? null,
                 indexToTime: [...(d.indexToTime || [])].map((t) => t ?? null),
+                // 切出片段時要用來還原開頭的 (BPM) 與 {分音}
+                tags: (d.tags || [])
+                    .filter((t) => t.type === 'bpm' || t.type === 'split')
+                    .map((t) => ({ type: t.type, value: t.value, time: t.time })),
             };
         };
 

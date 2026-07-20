@@ -9359,90 +9359,6 @@ var lodash_transformExports = requireLodash_transform();
 // node_modules/@discord/embedded-app-sdk/output/index.mjs
 var { Commands: Commands2 } = common_exports;
 
-// web/Scripts/indexDB.js
-console.log("[IndexDB] \u6B63\u5728\u521D\u59CB\u5316 IndexedDB...");
-var dbName = "SimaiEditorDB";
-var storeName = "editorState";
-openDB().then(() => {
-  console.log("[IndexDB] IndexedDB \u521D\u59CB\u5316\u5B8C\u6210");
-}).catch((error) => {
-  console.error("[IndexDB] IndexedDB \u521D\u59CB\u5316\u5931\u6557:", error);
-});
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(dbName);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(storeName)) {
-        db.createObjectStore(storeName);
-      }
-    };
-    request.onsuccess = () => {
-      const db = request.result;
-      if (db.objectStoreNames.contains(storeName)) {
-        resolve(db);
-        return;
-      }
-      const newVersion = db.version + 1;
-      db.close();
-      const upgradeReq = indexedDB.open(dbName, newVersion);
-      upgradeReq.onupgradeneeded = () => {
-        const upgradeDb = upgradeReq.result;
-        if (!upgradeDb.objectStoreNames.contains(storeName)) {
-          upgradeDb.createObjectStore(storeName);
-        }
-      };
-      upgradeReq.onsuccess = () => resolve(upgradeReq.result);
-      upgradeReq.onerror = () => reject(upgradeReq.error);
-    };
-    request.onerror = () => reject(request.error);
-  });
-}
-async function idbGet(key) {
-  try {
-    const db = await openDB();
-    return await new Promise((resolve) => {
-      try {
-        const transaction = db.transaction(storeName, "readonly");
-        const request = transaction.objectStore(storeName).get(key);
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => {
-          console.warn("[IndexDB] idbGet request error:", request.error);
-          resolve(null);
-        };
-      } catch (e) {
-        console.warn("[IndexDB] idbGet transaction failed:", e);
-        resolve(null);
-      }
-    });
-  } catch (e) {
-    console.warn("[IndexDB] idbGet openDB failed:", e);
-    return null;
-  }
-}
-async function idbSet(key, value) {
-  try {
-    const db = await openDB();
-    return await new Promise((resolve) => {
-      try {
-        const transaction = db.transaction(storeName, "readwrite");
-        const request = transaction.objectStore(storeName).put(value, key);
-        request.onsuccess = () => resolve(true);
-        request.onerror = () => {
-          console.warn("[IndexDB] idbSet request error:", request.error);
-          resolve(false);
-        };
-      } catch (e) {
-        console.warn("[IndexDB] idbSet transaction failed:", e);
-        resolve(false);
-      }
-    });
-  } catch (e) {
-    console.warn("[IndexDB] idbSet openDB failed:", e);
-    return false;
-  }
-}
-
 // web/Scripts/helper.js
 var scaleBase = 100;
 var innerCirleBase = (() => {
@@ -9807,6 +9723,8 @@ var AudioManager = class {
       "touchHold_riser": { start: 10, end: 11.8 }
     };
     this.scheduledSources = [];
+    this.muted = false;
+    this.synthFallback = false;
     this.lastResumeAttemptTime = 0;
     this.lastReinitTime = 0;
   }
@@ -9983,6 +9901,69 @@ var AudioManager = class {
       this.bgmSource = null;
     }
   }
+  /**
+   * 「簡易音效」的合成規格：每個音效 key 對應一個極短的振盪器點擊音。
+   * 回傳 null 代表這個 key 在簡易模式下不發聲（例如 answer 幾乎每顆音符都會觸發，
+   * 若一起合成會和主要判定音疊在一起變得吵雜）。
+   */
+  _synthSpec(key) {
+    switch (key) {
+      case "judge":
+        return { freq: 2e3, dur: 0.03, type: "square", gain: 0.5 };
+      case "judge_ex":
+        return { freq: 2200, dur: 0.03, type: "square", gain: 0.5 };
+      case "judge_break":
+        return { freq: 2600, dur: 0.05, type: "square", gain: 0.8 };
+      case "judge_break_slide":
+        return { freq: 2400, dur: 0.05, type: "square", gain: 0.7 };
+      case "break":
+        return { freq: 1200, dur: 0.06, type: "sawtooth", gain: 0.6 };
+      case "break_slide_start":
+        return { freq: 1800, dur: 0.05, type: "sawtooth", gain: 0.6 };
+      case "slide":
+        return { freq: 900, dur: 0.05, type: "triangle", gain: 0.7 };
+      case "touch":
+        return { freq: 1500, dur: 0.03, type: "sine", gain: 0.8 };
+      case "hanabi":
+        return { freq: 2800, dur: 0.08, type: "triangle", gain: 0.7 };
+      case "clock":
+        return { freq: 1e3, dur: 0.02, type: "square", gain: 0.8 };
+      default:
+        return null;
+    }
+  }
+  /** 以振盪器即時合成一個短音，取代尚未載入（或不打算載入）的音效檔 */
+  _playSynth(key, volume = 1, playTime = null) {
+    const spec = this._synthSpec(key);
+    if (!spec || !this.ctx) return;
+    const start = Math.max(this.ctx.currentTime, playTime ?? this.ctx.currentTime);
+    const end = start + spec.dur;
+    try {
+      const osc = this.ctx.createOscillator();
+      osc.type = spec.type;
+      osc.frequency.setValueAtTime(spec.freq, start);
+      const gainNode = this.ctx.createGain();
+      const peak = Math.max(1e-4, volume * spec.gain * 0.25);
+      gainNode.gain.setValueAtTime(1e-4, start);
+      gainNode.gain.exponentialRampToValueAtTime(peak, start + 1e-3);
+      gainNode.gain.exponentialRampToValueAtTime(1e-4, end);
+      osc.connect(gainNode);
+      gainNode.connect(this.sfxGainNode);
+      osc.start(start);
+      osc.stop(end);
+      this.scheduledSources.push(osc);
+      osc.onended = () => {
+        const i = this.scheduledSources.indexOf(osc);
+        if (i !== -1) this.scheduledSources.splice(i, 1);
+        try {
+          gainNode.disconnect();
+        } catch (e) {
+        }
+      };
+    } catch (e) {
+      console.warn("[Audio] \u5408\u6210\u97F3\u64AD\u653E\u5931\u6557:", e);
+    }
+  }
   stopAllScheduledSounds() {
     for (const src of this.scheduledSources) {
       try {
@@ -10034,13 +10015,9 @@ var AudioManager = class {
     let loaded = 0;
     const loadTasks = Object.entries(this.soundFiles).map(async ([key, url]) => {
       try {
-        let arrayBuffer = await idbGet(`sfx_cache_${key}`);
-        if (!arrayBuffer) {
-          const response = await fetch(url);
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          arrayBuffer = await response.arrayBuffer();
-          await idbSet(`sfx_cache_${key}`, arrayBuffer);
-        }
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const arrayBuffer = await response.arrayBuffer();
         const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer.slice(0));
         this.bufferMap.set(key, audioBuffer);
       } catch (e) {
@@ -10168,9 +10145,13 @@ var AudioManager = class {
    * 執行最終播放 (Web Audio API 核心)
    */
   play(key, isMono = false, volume = 1, playTime = null) {
+    if (this.muted) return;
     this.ensureContextSync();
     const buffer = this.bufferMap.get(key);
-    if (!buffer) return;
+    if (!buffer) {
+      if (this.synthFallback) this._playSynth(key, volume, playTime);
+      return;
+    }
     if (isMono && this.playingSources.has(key)) {
       try {
         const oldSource = this.playingSources.get(key);
@@ -10328,19 +10309,16 @@ async function loadAllImages(onProgress) {
   return images2;
 }
 async function getImgWithCache(url, key) {
-  let blob = await idbGet(`img_cache_${key}`);
-  if (!blob) {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP status ${response.status}`);
-      }
-      blob = await response.blob();
-      await idbSet(`img_cache_${key}`, blob);
-    } catch (e) {
-      console.error(`\u5716\u7247\u8F09\u5165\u5931\u6557: ${url}`, e);
-      throw e;
+  let blob;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP status ${response.status}`);
     }
+    blob = await response.blob();
+  } catch (e) {
+    console.error(`\u5716\u7247\u8F09\u5165\u5931\u6557: ${url}`, e);
+    throw e;
   }
   if (!blob) {
     throw new Error(`Blob is null for key: ${key}`);
@@ -12335,6 +12313,26 @@ var SimaiRenderer = class {
 };
 
 // activity/main.js
+function logRemote(event, data) {
+  try {
+    const payload = JSON.stringify({ event, data, ts: (/* @__PURE__ */ new Date()).toISOString(), ua: navigator.userAgent });
+    navigator.sendBeacon("/.proxy/api/debug-log", new Blob([payload], { type: "application/json" }));
+  } catch (e) {
+  }
+}
+logRemote("script:loaded", { persisted: false });
+window.addEventListener("pageshow", (event) => {
+  logRemote("pageshow", { persisted: event.persisted });
+  if (event.persisted) {
+    window.location.reload();
+  }
+});
+window.addEventListener("pagehide", (event) => {
+  logRemote("pagehide", { persisted: event.persisted });
+});
+document.addEventListener("visibilitychange", () => {
+  logRemote("visibilitychange", { state: document.visibilityState });
+});
 var $ = (id) => document.getElementById(id);
 var css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 var statusEl = $("status");
@@ -12351,36 +12349,22 @@ var rA = $("rangeA");
 var rB = $("rangeB");
 var params = new URLSearchParams(window.location.search);
 var clientId = params.get("client_id") || "1527644569133649960";
-var SESSION_CONFLICT_HINTS = [
-  "4006",
-  // Session resumption invalid
-  "4009",
-  // Session timeout
-  "invalidated",
-  "closed",
-  "terminated",
-  "destroyed"
-];
-function isSessionConflict(msg) {
-  const s = String(msg).toLowerCase();
-  return SESSION_CONFLICT_HINTS.some((k) => s.includes(k));
-}
 window.onerror = function(message, source, lineno, colno, error) {
+  logRemote("window.onerror", { message, source, lineno, colno });
   if (source && !source.includes("main.js") && !source.includes("localhost")) return true;
   statusEl.textContent = `JS \u932F\u8AA4\uFF1A${message} (L${lineno})`;
   statusEl.className = "status status-error";
 };
 window.onunhandledrejection = function(event) {
   const msg = event.reason?.message || String(event.reason);
-  if (isSessionConflict(msg)) {
-    showSessionConflictError();
-    event.preventDefault();
-    return;
-  }
+  logRemote("unhandledrejection", { msg });
   statusEl.textContent = `\u672A\u8655\u7406\u7684 Rejection\uFF1A${msg}`;
   statusEl.className = "status status-error";
 };
 var discordSdk = new DiscordSDK(clientId, { disableConsoleLogOverride: true });
+if (discordSdk.platform === "mobile") {
+  document.documentElement.classList.add("platform-mobile");
+}
 var auth = null;
 var M = [];
 var N = [];
@@ -12425,18 +12409,29 @@ var images = null;
 var nowIndexLocal = 0;
 var size = 320;
 function resizeCanvas() {
-  const leftPanel = document.querySelector(".left-panel");
-  const containerWidth = leftPanel ? leftPanel.clientWidth : document.querySelector(".container").clientWidth - (window.innerWidth <= 480 ? 24 : 40);
-  const maxCanvasSize = 320;
-  size = Math.min(maxCanvasSize, containerWidth);
-  cv.width = cv.height = size * devicePixelRatio;
+  const stage = $("stage");
+  const avail = stage ? Math.min(stage.clientWidth, stage.clientHeight) : Math.min(320, document.querySelector(".container").clientWidth - 40);
+  size = Math.max(100, Math.floor(avail));
   cv.style.width = cv.style.height = size + "px";
+  cv.width = cv.height = size * devicePixelRatio;
   draw(realTime, 0);
   if (M.length > 0) {
     drawDensity(measureIndex(realTime));
   }
 }
 window.addEventListener("resize", resizeCanvas);
+var stageEl = $("stage");
+if (stageEl && window.ResizeObserver) {
+  let lastSize = 0;
+  new ResizeObserver(() => {
+    const rect = cv.getBoundingClientRect();
+    const now = Math.round(Math.min(rect.width, rect.height));
+    if (now > 0 && Math.abs(now - lastSize) >= 1) {
+      lastSize = now;
+      resizeCanvas();
+    }
+  }).observe(stageEl);
+}
 resizeCanvas();
 var range = { start: 0, end: 0 };
 var previewStop = null;
@@ -12504,10 +12499,12 @@ function processChartData(decoded) {
 }
 async function setup() {
   console.log("[Activity] \u958B\u59CB\u521D\u59CB\u5316...");
+  logRemote("setup:start");
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u521D\u59CB\u5316 SDK\u2026";
   statusEl.className = "status status-connecting";
   await discordSdk.ready();
   console.log("[Activity] SDK \u521D\u59CB\u5316\u5B8C\u6210\uFF0C\u6B63\u5728\u7533\u8ACB\u6388\u6B0A...");
+  logRemote("setup:sdk_ready");
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u5411\u7528\u6236\u7AEF\u7533\u8ACB\u6388\u6B0A\u2026";
   const { code } = await discordSdk.commands.authorize({
     client_id: clientId,
@@ -12517,6 +12514,7 @@ async function setup() {
     scope: ["identify"]
   });
   console.log("[Activity] \u6388\u6B0A\u6210\u529F\uFF0Ccode:", code);
+  logRemote("setup:authorized");
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u8207\u672C\u5730\u5F8C\u7AEF\u4EA4\u63DB Token\u2026";
   const res = await fetch("/.proxy/api/token", {
     method: "POST",
@@ -12526,14 +12524,17 @@ async function setup() {
   if (!res.ok) throw new Error(`token \u4EA4\u63DB\u5931\u6557\uFF1A${res.status}`);
   const { access_token } = await res.json();
   console.log("[Activity] Token \u4EA4\u63DB\u6210\u529F\uFF0C\u6B63\u5728\u9A57\u8B49\u8EAB\u5206...");
+  logRemote("setup:token_exchanged");
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u9032\u884C\u7528\u6236\u8EAB\u4EFD\u9A57\u8B49\u2026";
   auth = await discordSdk.commands.authenticate({ access_token });
   console.log("[Activity] \u8EAB\u5206\u9A57\u8B49\u6210\u529F\uFF0C\u4F7F\u7528\u8005:", auth.user.username);
+  logRemote("setup:authenticated", { username: auth.user.username });
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u7372\u53D6\u8B5C\u9762\u8CC7\u6599\u2026";
   const chartRes = await fetch("/.proxy/api/chart");
   if (!chartRes.ok) throw new Error(`\u8B5C\u9762\u7372\u53D6\u5931\u6557\uFF1A${chartRes.status}`);
   const chartData = await chartRes.json();
   console.log("[Activity] \u8B5C\u9762\u7372\u53D6\u6210\u529F:", chartData.name);
+  logRemote("setup:chart_fetched", { name: chartData.name });
   chartText = chartData.text;
   songTitleEl.textContent = chartData.name;
   statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u89E3\u6790\u8B5C\u9762\u2026";
@@ -12542,11 +12543,10 @@ async function setup() {
     throw new Error("\u8B5C\u9762\u89E3\u6790\u5931\u6557\uFF1A\u8ACB\u6AA2\u67E5\u8A9E\u6CD5");
   }
   console.log("[Activity] \u8B5C\u9762\u89E3\u6790\u6210\u529F");
-  statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u8F09\u5165\u5716\u7247\u8207\u97F3\u6548\u7D20\u6750\u2026";
+  logRemote("setup:chart_decoded");
+  statusEl.textContent = "\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u8F09\u5165\u5716\u7247\u7D20\u6750\u2026";
   images = await loadAllImages();
-  await audioManager.init((pct) => {
-    statusEl.textContent = `\u9023\u7DDA\u4E2D\uFF1A\u6B63\u5728\u8F09\u5165\u97F3\u6548\u2026 ${Math.round(pct)}%`;
-  }).catch((e) => console.warn("[Audio] \u97F3\u6548\u8F09\u5165\u90E8\u5206\u5931\u6557:", e));
+  logRemote("setup:images_loaded");
   audioManager.setSFXVolume(sfxVolume);
   try {
     const blob = await (async () => {
@@ -12562,7 +12562,9 @@ async function setup() {
   } catch (e) {
     console.error("Failed to load outline image:", e);
   }
+  logRemote("setup:outline_loaded");
   await document.fonts.ready;
+  logRemote("setup:fonts_ready");
   DATA = processChartData(decoded);
   M = DATA.measures;
   N = DATA.notes;
@@ -12587,8 +12589,36 @@ async function setup() {
   statusEl.textContent = `\u9023\u7DDA\u6210\u529F\uFF1A${auth.user.global_name ?? auth.user.username}`;
   statusEl.className = "status status-ready";
   resizeCanvas();
+  setActiveEndpoint(null);
+  const resumed = await restoreResumeSession(maxCombo);
+  if (!resumed) {
+    rA.value = 0;
+    rB.value = maxCombo;
+    range.start = 0;
+    range.end = maxCombo;
+  }
   syncRange();
-  seek(0);
+  seek(resumed ? N[range.start]?.time ?? 0 : 0);
+  logRemote("setup:complete", resumed ? { resumed: [range.start, range.end] } : void 0);
+}
+async function restoreResumeSession(maxCombo) {
+  try {
+    const res = await fetch(`/.proxy/api/resume?userId=${encodeURIComponent(auth.user.id)}`);
+    if (!res.ok) return false;
+    const s = await res.json();
+    if (typeof s.startCombo !== "number" || typeof s.endCombo !== "number") return false;
+    const start = Math.max(0, Math.min(s.startCombo, maxCombo));
+    const end = Math.max(start, Math.min(s.endCombo, maxCombo));
+    rA.value = start;
+    rB.value = end;
+    range.start = start;
+    range.end = end;
+    showMessage("\u21A9\uFE0F \u5DF2\u56DE\u5230\u8A0A\u606F\u4E2D\u90A3\u4E00\u6BB5\u7684\u4F4D\u7F6E", "info");
+    return true;
+  } catch (e) {
+    console.warn("[Resume] \u9084\u539F\u7E8C\u770B\u4F4D\u7F6E\u5931\u6557:", e);
+    return false;
+  }
 }
 function measureIndex(t) {
   let lo = 0, hi = M.length - 1;
@@ -12615,30 +12645,97 @@ function syncUI() {
   $("hudCombo").textContent = currentComboIndex();
   drawDensity(mi);
 }
-$("b_m5").onclick = () => jumpMeasure(-5);
-$("b_m1").onclick = () => jumpMeasure(-1);
-$("b_p1").onclick = () => jumpMeasure(1);
-$("b_p5").onclick = () => jumpMeasure(5);
-$("b_f1").onclick = () => seek(realTime - 0.1);
-$("b_f2").onclick = () => seek(realTime + 0.1);
-$("speedSel").onchange = (e) => speed = +e.target.value;
+$("b_m5").onclick = () => {
+  jumpMeasure(-5);
+  syncActiveEndpoint();
+};
+$("b_m1").onclick = () => {
+  jumpMeasure(-1);
+  syncActiveEndpoint();
+};
+$("b_p1").onclick = () => {
+  jumpMeasure(1);
+  syncActiveEndpoint();
+};
+$("b_p5").onclick = () => {
+  jumpMeasure(5);
+  syncActiveEndpoint();
+};
+$("b_f1").onclick = () => {
+  seek(realTime - 0.1);
+  syncActiveEndpoint();
+};
+$("b_f2").onclick = () => {
+  seek(realTime + 0.1);
+  syncActiveEndpoint();
+};
+$("speedSlider").addEventListener("input", (e) => {
+  speed = +e.target.value;
+  $("speedVal").textContent = `${speed.toFixed(2)}\xD7`;
+});
+var SFX_MODES = ["off", "simple", "full"];
+var SFX_MODE_LABEL = { off: "\u{1F507} \u975C\u97F3", simple: "\u{1F509} \u7C21\u6613", full: "\u{1F50A} \u5B8C\u6574" };
+var sfxMode = "simple";
+var sfxFullLoading = false;
+var sfxFullLoaded = false;
+var sfxModeBtn = $("sfxModeBtn");
+var controlSettings = document.querySelector(".control-settings");
+function applySfxMode() {
+  audioManager.muted = sfxMode === "off";
+  audioManager.synthFallback = sfxMode !== "off";
+  sfxModeBtn.textContent = SFX_MODE_LABEL[sfxMode];
+  controlSettings.classList.toggle("sfx-off", sfxMode === "off");
+  if (sfxMode === "off") {
+    audioManager.soundQueue = [];
+    audioManager.stopAllScheduledSounds();
+  }
+}
+function loadFullSfx() {
+  if (sfxFullLoaded || sfxFullLoading) return;
+  sfxFullLoading = true;
+  showMessage("\u{1F50A} \u6B63\u5728\u8F09\u5165\u5B8C\u6574\u97F3\u6548\u2026\uFF08\u5148\u4EE5\u7C21\u6613\u97F3\u64AD\u653E\uFF09", "info");
+  audioManager.init((pct) => {
+    showMessage(`\u{1F50A} \u6B63\u5728\u8F09\u5165\u5B8C\u6574\u97F3\u6548\u2026 ${Math.round(pct)}%\uFF08\u5148\u4EE5\u7C21\u6613\u97F3\u64AD\u653E\uFF09`, "info");
+  }).catch((e) => console.warn("[Audio] \u97F3\u6548\u8F09\u5165\u90E8\u5206\u5931\u6557:", e)).then(() => {
+    audioManager.setSFXVolume(sfxVolume);
+    sfxFullLoaded = true;
+    sfxFullLoading = false;
+    if (sfxMode === "full") showMessage("\u2705 \u5B8C\u6574\u97F3\u6548\u5DF2\u5C31\u7DD2", "success");
+    setTimeout(() => showMessage("", ""), 1500);
+  });
+}
+sfxModeBtn.addEventListener("click", () => {
+  sfxMode = SFX_MODES[(SFX_MODES.indexOf(sfxMode) + 1) % SFX_MODES.length];
+  applySfxMode();
+  unlockAudio();
+  if (sfxMode === "full") loadFullSfx();
+});
+function unlockAudio() {
+  audioManager.ensureContextSync();
+  if (audioManager.ctx?.state === "suspended") {
+    audioManager.ctx.resume().catch(() => {
+    });
+  }
+}
 playBtn.onclick = () => {
   playing = !playing;
   if (!playing) previewStop = null;
   playBtn.textContent = playing ? "\u23F8" : "\u25B6";
   if (playing) {
-    audioManager.ensureContextSync();
-    if (audioManager.ctx?.state === "suspended") {
-      audioManager.ctx.resume().catch(() => {
-      });
-    }
+    unlockAudio();
     lastTs = performance.now();
     requestAnimationFrame(loop);
   }
 };
-slider.addEventListener("pointerdown", () => dragging = true);
+slider.addEventListener("pointerdown", () => {
+  dragging = true;
+  setActiveEndpoint(null);
+});
 window.addEventListener("pointerup", () => dragging = false);
-slider.addEventListener("input", () => seek(M[+slider.value]));
+slider.addEventListener("input", () => {
+  setActiveEndpoint(null);
+  seek(M[+slider.value]);
+});
 function densSeek(ev) {
   const r = dv.getBoundingClientRect();
   const frac = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
@@ -12646,6 +12743,7 @@ function densSeek(ev) {
 }
 dv.addEventListener("pointerdown", (ev) => {
   dragging = true;
+  setActiveEndpoint(null);
   densSeek(ev);
 });
 dv.addEventListener("pointermove", (ev) => {
@@ -12674,9 +12772,9 @@ function drawDensity(playheadMi) {
   if (typeof range !== "undefined" && N.length > 0) {
     const startM = measureIndex(N[range.start]?.time || 0);
     const endM = measureIndex(N[range.end]?.time || 0);
-    dctx.fillStyle = "rgba(255, 255, 255, 0.13)";
+    dctx.fillStyle = rangeOverLimit ? "rgba(242, 63, 67, 0.16)" : "rgba(255, 255, 255, 0.13)";
     dctx.fillRect(startM * bw, 0, (endM - startM + 1) * bw, h);
-    dctx.fillStyle = css("--slide");
+    dctx.fillStyle = rangeOverLimit ? OVER_LIMIT_COLOR : css("--slide");
     dctx.fillRect(startM * bw, 0, 2, h);
     dctx.fillRect((endM + 1) * bw - 2, 0, 2, h);
   }
@@ -12689,6 +12787,9 @@ function currentComboIndex() {
   return idx === -1 ? N.length - 1 : idx;
 }
 var MAX_RENDER_SEC = 30;
+var OVER_LIMIT_COLOR = "#f23f43";
+var cleanCut = true;
+var rangeOverLimit = false;
 function getRangeDuration() {
   if (!N || N.length === 0) return 0;
   const startTime = N[range.start]?.time ?? 0;
@@ -12698,34 +12799,120 @@ function getRangeDuration() {
 function syncRange() {
   range.start = Math.min(+rA.value, +rB.value);
   range.end = Math.max(+rA.value, +rB.value);
+  const max = +rA.max || 1;
+  const pctStart = range.start / max * 100;
+  const pctEnd = range.end / max * 100;
+  const fill = $("rangeFill");
+  fill.style.left = `${pctStart}%`;
+  fill.style.width = `${Math.max(0, pctEnd - pctStart)}%`;
   const dur = getRangeDuration();
   const noteCount = range.end - range.start + 1;
+  rangeOverLimit = noteCount > 0 && dur > MAX_RENDER_SEC;
+  $("rangeTrack").classList.toggle("over-limit", rangeOverLimit);
   let label = `Combo ${range.start} - ${range.end}`;
   if (noteCount <= 0) {
     label += "  \u26A0\uFE0F \u7A7A\u5340\u9593";
     showMessage("\u26A0\uFE0F \u9078\u53D6\u7BC4\u570D\u5167\u6C92\u6709\u97F3\u7B26\uFF0C\u7121\u6CD5\u6E32\u67D3\u3002", "error");
-  } else if (dur > MAX_RENDER_SEC) {
-    label += `  \u26A0\uFE0F ~${dur.toFixed(1)}s\uFF08\u8D85\u904E ${MAX_RENDER_SEC}s \u4E0A\u9650\uFF0C\u5C07\u88AB\u622A\u65B7\uFF09`;
-    showMessage(`\u26A0\uFE0F \u6240\u9078\u5340\u9593\u7D04 ${dur.toFixed(1)} \u79D2\uFF0C\u8D85\u904E ${MAX_RENDER_SEC} \u79D2\u4E0A\u9650\uFF0CGIF \u5C07\u53EA\u6E32\u67D3\u524D ${MAX_RENDER_SEC} \u79D2\u3002`, "error");
   } else {
     label += `  (~${dur.toFixed(1)}s)`;
     showMessage("", "");
   }
+  const mark = (which, name) => rangeLocked[which] ? `\u{1F512}${name}` : activeEndpoint === which ? `\u25C6${name}` : "";
+  const marks = [mark("a", "\u8D77"), mark("b", "\u7D42")].filter(Boolean).join(" ");
+  if (marks) label += `  ${marks}`;
   $("rangeLabel").textContent = label;
+  $("rangeLabel").classList.toggle("over-limit", rangeOverLimit);
   drawDensity(measureIndex(realTime));
 }
-rA.addEventListener("input", syncRange);
-rB.addEventListener("input", syncRange);
+var rangeLocked = { a: false, b: false };
+var activeEndpoint = null;
+function setActiveEndpoint(which) {
+  activeEndpoint = which;
+  rA.classList.toggle("active", which === "a");
+  rB.classList.toggle("active", which === "b");
+  slider.classList.toggle("active", which === null);
+}
+function syncActiveEndpoint() {
+  if (!activeEndpoint || rangeLocked[activeEndpoint]) return;
+  const input = activeEndpoint === "a" ? rA : rB;
+  input.value = currentComboIndex();
+  syncRange();
+}
+function applyRangeLocks() {
+  rA.classList.toggle("locked", rangeLocked.a);
+  rB.classList.toggle("locked", rangeLocked.b);
+  syncRange();
+}
+function onRangeInput(which) {
+  const input = which === "a" ? rA : rB;
+  if (rangeLocked[which]) {
+    input.value = which === "a" ? range.start : range.end;
+    return;
+  }
+  setActiveEndpoint(which);
+  syncRange();
+  const t = N[+input.value]?.time;
+  if (t !== void 0) seek(t);
+}
+rA.addEventListener("input", () => onRangeInput("a"));
+rB.addEventListener("input", () => onRangeInput("b"));
+(() => {
+  const track = $("rangeTrack");
+  let last = { t: 0, which: null };
+  const nearestThumb = (clientX) => {
+    const r = track.getBoundingClientRect();
+    const val = (clientX - r.left) / r.width * (+rA.max || 1);
+    return Math.abs(val - +rA.value) <= Math.abs(val - +rB.value) ? "a" : "b";
+  };
+  track.addEventListener("pointerdown", (e) => {
+    if (rA.disabled) return;
+    const which = nearestThumb(e.clientX);
+    const now = performance.now();
+    if (last.which === which && now - last.t < 350) {
+      rangeLocked[which] = !rangeLocked[which];
+      applyRangeLocks();
+      showMessage(
+        rangeLocked[which] ? `\u{1F512} \u5DF2\u9396\u5B9A${which === "a" ? "\u8D77\u9EDE" : "\u7D42\u9EDE"}\uFF08\u518D\u96D9\u64CA\u89E3\u9664\uFF09` : `\u{1F513} \u5DF2\u89E3\u9664${which === "a" ? "\u8D77\u9EDE" : "\u7D42\u9EDE"}\u9396\u5B9A`,
+        "info"
+      );
+      last = { t: 0, which: null };
+      return;
+    }
+    last = { t: now, which };
+    if (!rangeLocked[which]) setActiveEndpoint(which);
+  });
+})();
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  if (!DATA || playBtn.disabled) return;
+  const dir = e.key === "ArrowLeft" ? -1 : 1;
+  if (!activeEndpoint) {
+    e.preventDefault();
+    if (e.shiftKey) jumpMeasure(dir);
+    else seek(realTime + dir * 0.1);
+    return;
+  }
+  if (rangeLocked[activeEndpoint]) return;
+  const input = activeEndpoint === "a" ? rA : rB;
+  if (input.disabled) return;
+  const step = e.shiftKey ? 10 : 1;
+  const max = +input.max || 0;
+  input.value = Math.max(0, Math.min(max, +input.value + dir * step));
+  e.preventDefault();
+  onRangeInput(activeEndpoint);
+});
 $("setStart").onclick = () => {
+  if (rangeLocked.a) return showMessage("\u{1F512} \u8D77\u9EDE\u5DF2\u9396\u5B9A\uFF0C\u96D9\u64CA\u8A72\u7AEF\u9EDE\u53EF\u89E3\u9664", "info");
   const cIdx = currentComboIndex();
   rA.value = cIdx;
-  rB.value = Math.max(range.end, cIdx);
+  if (!rangeLocked.b) rB.value = Math.max(range.end, cIdx);
   syncRange();
 };
 $("setEnd").onclick = () => {
+  if (rangeLocked.b) return showMessage("\u{1F512} \u7D42\u9EDE\u5DF2\u9396\u5B9A\uFF0C\u96D9\u64CA\u8A72\u7AEF\u9EDE\u53EF\u89E3\u9664", "info");
   const cIdx = currentComboIndex();
   rB.value = cIdx;
-  rA.value = Math.min(range.start, cIdx);
+  if (!rangeLocked.a) rA.value = Math.min(range.start, cIdx);
   syncRange();
 };
 $("goStart").onclick = () => {
@@ -12749,6 +12936,43 @@ $("sfxSlider").addEventListener("input", (e) => {
   $("sfxVal").textContent = Math.round(sfxVolume * 100) + "%";
   audioManager.setSFXVolume(sfxVolume);
 });
+applySfxMode();
+$("cleanCutBtn").addEventListener("click", () => {
+  cleanCut = !cleanCut;
+  $("cleanCutBtn").textContent = `\u2702 \u5207\u7684\u4E7E\u6DE8\uFF1A${cleanCut ? "\u958B" : "\u95DC"}`;
+  syncRange();
+});
+(() => {
+  const toggle = $("settingsToggle");
+  const panel = $("settingsPanel");
+  if (!toggle || !panel) return;
+  const close = () => {
+    panel.hidden = true;
+  };
+  function position() {
+    const r = toggle.getBoundingClientRect();
+    panel.style.top = `${r.bottom + 6}px`;
+    panel.style.left = "0px";
+    const w = panel.offsetWidth;
+    panel.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  }
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) {
+      position();
+      unlockAudio();
+    }
+  });
+  window.addEventListener("resize", () => {
+    if (!panel.hidden) position();
+  });
+  panel.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+  });
+})();
 $("exportGifBtn").onclick = async () => {
   const noteCount = range.end - range.start + 1;
   if (noteCount <= 0) {
@@ -12770,7 +12994,9 @@ $("exportGifBtn").onclick = async () => {
         username: auth.user.global_name ?? auth.user.username,
         simai: chartText,
         startCombo,
-        endCombo
+        endCombo,
+        chartName: songTitleEl.textContent,
+        cleanCut
       })
     });
     const data = await res.json().catch(() => ({}));
@@ -12813,8 +13039,11 @@ function draw(t, dt = 0) {
     decodedTags: DATA.tags || [],
     playScoreRes,
     nowIndex: nowIndexLocal,
-    skipAudioQueue: !playing
-    // 播放中才觸發音效佇列
+    // 必須固定傳 false：logic 內部本來就有 `playing` 判斷，只有在播放中才會真的排入音效；
+    // 而暫停/拖曳時要靠它的 else 分支把每顆 note 的 _startEffectPlayed / _endEffectPlayed
+    // 重設回 false。先前這裡傳 !playing，導致暫停時整段邏輯被跳過、旗標一直留在 true，
+    // 於是倒帶後重新播放時那些音符就再也不會發聲。
+    skipAudioQueue: false
   });
   nowIndexLocal = updatedNowIndex;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -12868,8 +13097,9 @@ function setInputsDisabled(disabled) {
   $("b_f2").disabled = disabled;
   $("b_p1").disabled = disabled;
   $("b_p5").disabled = disabled;
-  $("speedSel").disabled = disabled;
+  $("speedSlider").disabled = disabled;
   $("hsSlider").disabled = disabled;
+  $("settingsToggle").disabled = disabled;
   slider.disabled = disabled;
   rA.disabled = disabled;
   rB.disabled = disabled;
@@ -12885,22 +13115,13 @@ function showMessage(text, type) {
 }
 var retryBtn = $("retryBtn");
 var setupRunning = false;
-function showSessionConflictError() {
-  songTitleEl.textContent = "\u9023\u7DDA\u4E2D\u65B7";
-  statusEl.textContent = "\u26A0\uFE0F \u6B64 Activity \u5DF2\u5728\u53E6\u4E00\u88DD\u7F6E\u958B\u555F\uFF0C\u8ACB\u95DC\u9589\u5176\u4ED6\u88DD\u7F6E\u5F8C\u9EDE\u64CA\u300C\u91CD\u65B0\u9023\u7DDA\u300D\u3002";
-  statusEl.className = "status status-error";
-  retryBtn.style.display = "";
-}
 function showSetupError(e) {
   const msg = e?.message || String(e);
-  if (isSessionConflict(msg)) {
-    showSessionConflictError();
-  } else {
-    songTitleEl.textContent = "\u9023\u7DDA\u4E2D\u65B7";
-    statusEl.textContent = `\u521D\u59CB\u5316\u5931\u6557\uFF1A${msg}`;
-    statusEl.className = "status status-error";
-    retryBtn.style.display = "";
-  }
+  logRemote("setup:error", { msg });
+  songTitleEl.textContent = "\u9023\u7DDA\u4E2D\u65B7";
+  statusEl.textContent = `\u521D\u59CB\u5316\u5931\u6557\uFF1A${msg}`;
+  statusEl.className = "status status-error";
+  retryBtn.style.display = "";
   setupRunning = false;
 }
 async function runSetup() {
@@ -12911,12 +13132,6 @@ async function runSetup() {
   try {
     await setup();
     setupRunning = false;
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && !playing) {
-        showMessage("\u{1F4A1} \u82E5\u767B\u5165\u6216\u5207\u63DB\u4E86\u88DD\u7F6E\uFF0C\u5EFA\u8B70\u9EDE\u64CA\u300C\u91CD\u65B0\u9023\u7DDA\u300D\u4EE5\u78BA\u8A8D\u9023\u7DDA\u72C0\u614B\u3002", "info");
-        retryBtn.style.display = "";
-      }
-    }, { once: true });
   } catch (e) {
     console.error(e);
     showSetupError(e);

@@ -64,13 +64,19 @@ html, body {
 }
 
 .left-panel {
-  width: 320px;
+  /* 譜面 320 ＋ 左右各一排導覽鍵 */
+  width: 440px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   align-items: center;
   justify-content: flex-start;
   flex-shrink: 0;
+}
+
+/* 桌機版譜面固定高度；手機版由 media query 改成隨螢幕縮放 */
+.player-row {
+  height: 320px;
 }
 
 .right-panel {
@@ -84,6 +90,7 @@ html, body {
 }
 
 header {
+  position: relative;
   text-align: center;
   width: 100%;
   border-bottom: 1px solid var(--line);
@@ -131,38 +138,42 @@ header h1 {
   background: #5865f2;
 }
 
+/* TAP/HOLD/SLIDE… 各類數量不需要顯示（JS 仍會寫入，只是不呈現） */
 header .sub {
-  color: var(--dim);
-  font-size: 11px;
-  margin-top: 4px;
-  letter-spacing: .08em;
-  font-variant-numeric: tabular-nums;
+  display: none;
 }
 
 #stage {
   position: relative;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   justify-content: center;
+  align-items: center;
 }
 
+/* 畫布維持正方形，高度吃滿 .player-row，寬度不夠時再自動縮 */
 #chartCanvas {
   display: block;
   background: #0c0c1e;
   border-radius: 14px;
   border: 1px solid var(--line);
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
 }
 
+/* 播放資訊獨立一行，不覆蓋譜面 */
 #hud {
-  position: absolute;
-  inset: 10px 14px auto 14px;
   display: flex;
   justify-content: space-between;
+  gap: 8px;
+  width: 100%;
   font-size: 12px;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
-  pointer-events: none;
-  width: calc(100% - 28px);
+  flex-shrink: 0;
 }
 
 #hud b {
@@ -178,24 +189,40 @@ header .sub {
   width: 100%;
 }
 
-.control-buttons {
+/* 譜面與左右導覽鍵並排 */
+.player-row {
   display: flex;
-  gap: 4px;
+  align-items: stretch;
   justify-content: center;
+  gap: 8px;
   width: 100%;
-  flex-wrap: nowrap;
+  min-height: 0;
 }
 
-.control-buttons button {
+.nav-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  width: 52px;
+}
+
+.nav-col button {
+  flex: 1;
+}
+
+.control-buttons button, .nav-col button {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 8px 6px;
-  font-size: 13px;
+  padding: 8px 2px;
+  font-size: 12px;
   cursor: pointer;
   flex: 1;
+  min-width: 0;
   text-align: center;
+  white-space: nowrap;
   transition: background .12s;
   touch-action: manipulation;
 }
@@ -206,23 +233,163 @@ header .sub {
   justify-content: center;
   align-items: center;
   width: 100%;
+  flex-wrap: wrap;
 }
 
-.control-buttons button:hover:not(:disabled) {
+/* 設定區的 slider：跟選取範圍的滑桿共用一套視覺 */
+.speedbox input[type="range"] {
+  appearance: none;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+  width: 78px;
+  touch-action: none;
+}
+
+.speedbox input[type="range"]::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 3px;
+  background: #26264c;
+}
+
+.speedbox input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--slide);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+}
+
+.speedbox input[type="range"]::-moz-range-track {
+  height: 5px;
+  border-radius: 3px;
+  background: #26264c;
+}
+
+.speedbox input[type="range"]::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--slide);
+}
+
+.speedbox input[type="range"]:disabled::-webkit-slider-thumb {
+  background: var(--dim);
+  border-color: var(--dim);
+}
+
+.speedbox b, .speedbox #speedVal, .speedbox #hsVal, .speedbox #sfxVal {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+}
+
+.btn-sfx-mode {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s, border-color .12s;
+  touch-action: manipulation;
+}
+
+.btn-sfx-mode:hover {
   background: #2a2a55;
 }
 
-.control-buttons button:disabled {
+/* 音效關閉時把音量 slider 收起來，避免佔空間 */
+.sfx-off #sfxSlider, .sfx-off #sfxVal {
+  display: none;
+}
+
+.control-buttons button:hover:not(:disabled), .nav-col button:hover:not(:disabled) {
+  background: #2a2a55;
+}
+
+.control-buttons button:disabled, .nav-col button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
+/* 播放鍵獨佔整排 */
 #playBtn {
   background: var(--play);
   border-color: var(--play);
   color: #fff;
   font-weight: 700;
-  min-width: 54px;
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--play);
+  padding: 10px;
+  font-size: 18px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#playBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- 設定選單（與歌名同一水平線，靠左） ---------- */
+#settingsMenu {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 30;
+}
+
+.btn-settings {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  width: 38px;
+  height: 38px;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+  touch-action: manipulation;
+}
+
+.btn-settings:hover:not(:disabled) {
+  background: #2a2a55;
+  border-color: var(--slide);
+}
+
+.btn-settings:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 展開的設定浮層：fixed 定位，不推擠版面、不會撐出捲動，也不會被祖先切掉 */
+#settingsPanel {
+  position: fixed;
+  z-index: 60;
+  width: max-content;
+  min-width: 210px;
+  max-width: calc(100vw - 24px);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+}
+
+#settingsPanel[hidden] {
+  display: none;
 }
 
 .speedbox {
@@ -302,6 +469,11 @@ header .sub {
   box-shadow: 0 0 6px var(--tap);
 }
 
+/* 方向鍵目前控制的是播放進度時，進度條的把手加一圈提示 */
+#measureSlider.active::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(255, 79, 165, .3), 0 0 6px var(--tap);
+}
+
 #measureTicks {
   display: flex;
   justify-content: space-between;
@@ -330,56 +502,223 @@ header .sub {
 
 #rangePanel {
   margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--line);
+  padding: 10px 12px 12px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--line);
+  border-radius: 10px;
 }
 
-#rangeInfo {
+#rangeHeader {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
   font-size: 11px;
   color: var(--dim);
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .range-title {
-  color: var(--slide);
+  color: var(--text);
   font-weight: 700;
+  font-size: 12px;
 }
 
 #rangeLabel {
   font-variant-numeric: tabular-nums;
-  color: var(--text);
-  min-width: 45px;
+  color: var(--slide);
+  font-weight: 600;
+  margin-left: auto;
 }
 
-#rangeInfo button {
+#rangeTrack {
+  position: relative;
+  height: 22px;
+  margin-bottom: 10px;
+}
+
+.range-track-bg {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  top: 50%;
+  height: 5px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background: #26264c;
+}
+
+.range-track-fill {
+  position: absolute;
+  top: 50%;
+  /* 預設整條填滿，對應「起點在最左、終點在最右」的初始狀態 */
+  left: 0;
+  width: 100%;
+  height: 5px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--slide), var(--tap));
+  pointer-events: none;
+}
+
+#rangeTrack input {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+  /* 自己處理拖曳，避免手機把拖動/雙點解讀成捲動或縮放 */
+  touch-action: none;
+}
+
+#rangeTrack input::-webkit-slider-runnable-track,
+#rangeTrack input::-moz-range-track {
+  height: 5px;
+  margin-top: 8.5px;
+  background: transparent;
+}
+
+#rangeTrack input::-webkit-slider-thumb {
+  appearance: none;
+  pointer-events: auto;
+  width: 15px;
+  height: 15px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--slide);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: ew-resize;
+  transition: transform .12s ease;
+}
+
+#rangeTrack input::-moz-range-thumb {
+  appearance: none;
+  pointer-events: auto;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--slide);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: ew-resize;
+  transition: transform .12s ease;
+}
+
+#rangeTrack input:hover:not(:disabled)::-webkit-slider-thumb,
+#rangeTrack input:active:not(:disabled)::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+#rangeTrack input:disabled::-webkit-slider-thumb,
+#rangeTrack input:disabled::-moz-range-thumb {
+  background: var(--dim);
+  border-color: var(--dim);
+  cursor: not-allowed;
+}
+
+/* 作用中的端點（最後一次點過/拖過的那個）：按導覽鍵時它會跟著播放頭走 */
+#rangeTrack input.active:not(.locked)::-webkit-slider-thumb {
+  border-color: var(--tap);
+  box-shadow: 0 0 0 3px rgba(255, 79, 165, .3), 0 1px 4px rgba(0, 0, 0, .5);
+}
+
+#rangeTrack input.active:not(.locked)::-moz-range-thumb {
+  border-color: var(--tap);
+}
+
+/* 雙擊鎖定的端點：不再吃指標事件，避免調好之後被誤觸；用琥珀色標示 */
+#rangeTrack input.locked {
+  pointer-events: none;
+}
+
+#rangeTrack input.locked::-webkit-slider-thumb {
+  pointer-events: none;
+  background: var(--hold);
+  border-color: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 210, 62, .3), 0 1px 4px rgba(0, 0, 0, .5);
+  cursor: not-allowed;
+}
+
+#rangeTrack input.locked::-moz-range-thumb {
+  pointer-events: none;
+  background: var(--hold);
+  border-color: #fff;
+  cursor: not-allowed;
+}
+
+/* 區間超過渲染秒數上限：只用紅色提示，不再跳文字警告 */
+#rangeTrack.over-limit .range-track-fill {
+  background: #f23f43;
+}
+
+#rangeTrack.over-limit input:not(:disabled)::-webkit-slider-thumb {
+  border-color: #f23f43;
+}
+
+#rangeTrack.over-limit input:not(:disabled)::-moz-range-thumb {
+  border-color: #f23f43;
+}
+
+#rangeLabel.over-limit {
+  color: #f23f43;
+}
+
+/* 起點/終點按鈕貼在滑桿正下方的左右兩端，視覺上直接對應兩個端點 */
+#rangeEnds {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+#rangeActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+#rangeActions button {
+  flex: 1;
+}
+
+#rangeEnds button, #rangeActions button {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 4px 8px;
+  padding: 5px 10px;
   font-size: 11px;
   cursor: pointer;
+  transition: background .12s, border-color .12s;
 }
 
-#rangeInfo button:hover:not(:disabled) {
+#rangeEnds button:hover:not(:disabled), #rangeActions button:hover:not(:disabled) {
   background: #2a2a55;
+  border-color: var(--slide);
 }
 
-#rangeInfo button:disabled {
+#rangeEnds button:disabled, #rangeActions button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
+/* 主要動作：整條置底、明顯比其他按鈕大 */
 .btn-export {
-  background: #23a55a !important;
-  border-color: #23a55a !important;
-  color: white !important;
+  display: block;
+  width: 100%;
+  background: #23a55a;
+  border: 1px solid #23a55a;
+  border-radius: 8px;
+  color: #fff;
   font-weight: 700;
-  margin-left: auto;
+  font-size: 13px;
+  padding: 10px;
+  cursor: pointer;
   transition: opacity 0.2s;
 }
 
@@ -387,39 +726,9 @@ header .sub {
   opacity: 0.9;
 }
 
-#rangeTrack {
-  position: relative;
-  height: 20px;
-}
-
-#rangeTrack input {
-  position: absolute;
-  left: 0;
-  width: 100%;
-  margin: 0;
-  appearance: none;
-  height: 20px;
-  background: transparent;
-  pointer-events: none;
-}
-
-#rangeTrack input::-webkit-slider-runnable-track {
-  height: 4px;
-  margin-top: 8px;
-  border-radius: 2px;
-  background: #26264c;
-}
-
-#rangeTrack input::-webkit-slider-thumb {
-  appearance: none;
-  pointer-events: auto;
-  width: 14px;
-  height: 14px;
-  margin-top: -5px;
-  border-radius: 4px;
-  background: var(--slide);
-  border: 2px solid #fff;
-  cursor: ew-resize;
+.btn-export:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .app-footer {
@@ -459,25 +768,105 @@ header .sub {
 }
 
 @media (max-width: 768px) {
+  /* 手機版目標：整頁不捲動，譜面全程看得到（畫布會自動縮小去配合剩餘空間）。
+     同時最上方要空出 Discord 自己疊加的活動標題列（返回鈕／活動名稱／退出鈕）所佔的高度。 */
+  html, body {
+    overflow: hidden;
+    height: 100%;
+  }
+
+  body {
+    align-items: flex-start;
+    /* 沒有裝置資訊時的保守值；確認是手機平台後由下面的規則改用實際安全區高度 */
+    padding-top: 84px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Discord 的活動列疊在裝置安全區（瀏海／狀態列）正下方，高度約 48px。
+     用 safe-area-inset-top 自動適應各機型，不再固定寫死而浪費空間。 */
+  .platform-mobile body {
+    padding-top: calc(env(safe-area-inset-top, 24px) + 50px);
+  }
+
   .container {
     max-width: 500px;
-    max-height: calc(100vh - 20px);
+    /* 扣掉上下 padding 後填滿剩餘畫面，內部再自行分配 */
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+    padding: 10px 12px;
+    gap: 6px;
   }
+
   .main-content {
     flex-direction: column;
-    overflow-y: auto;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
+
   .left-panel, .right-panel {
     width: 100%;
-    max-width: 340px;
+    max-width: 360px;
   }
+
+  /* 譜面吸收所有剩餘空間：其他元件都是固定高度，這樣永遠剛好塞滿一屏、不需捲動 */
+  .left-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    gap: 8px;
+  }
+
+  .player-row {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 132px;
+    max-height: 300px;
+  }
+
+  .nav-col {
+    width: 46px;
+  }
+
+  /* 完全不捲動：右半固定高度、不給捲軸 */
   .right-panel {
-    overflow: visible;
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: hidden;
+    gap: 6px;
   }
-  html, body {
-    overflow: auto;
+
+  .controls, #timeline {
+    flex-shrink: 0;
+  }
+
+  /* 為了讓譜面留下足夠高度，手機版收掉純裝飾／次要的資訊 */
+  #legend,
+  #timeLabels,
+  #measureTicks {
+    display: none;
+  }
+
+  .app-footer {
+    min-height: 0;
+  }
+
+  #densityCanvas {
+    height: 40px;
+  }
+
+  #timeline {
+    padding: 8px 10px 10px;
+  }
+
+  header {
+    padding-bottom: 6px;
+  }
+
+  header .sub {
+    font-size: 10px;
   }
 }
 
@@ -490,21 +879,152 @@ header .sub {
   header h1 {
     font-size: 16px;
   }
-  .control-buttons button {
-    padding: 6px 4px;
-    font-size: 11px;
-  }
   #timeline {
     padding: 8px 10px;
   }
-  #rangeInfo {
+  #rangeEnds, #rangeActions {
     gap: 4px;
   }
-  .btn-export {
-    margin-left: 0;
+}
+
+/* ---------- 手機：加大點擊區 ---------- */
+@media (max-width: 768px) {
+  .nav-col button {
+    font-size: 13px;
+    padding: 6px 2px;
+  }
+
+  #playBtn {
+    padding: 12px;
+    font-size: 20px;
+  }
+
+  .btn-settings {
+    width: 42px;
+    height: 42px;
+    font-size: 18px;
+  }
+
+
+  .speedbox {
+    gap: 6px;
+  }
+
+  .speedbox input[type="range"] {
+    height: 34px;
     width: 100%;
-    margin-top: 4px;
-    text-align: center;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .speedbox input[type="range"]::-webkit-slider-thumb {
+    width: 20px;
+    height: 20px;
+    margin-top: -8px;
+  }
+
+  .speedbox #speedVal, .speedbox #hsVal, .speedbox #sfxVal {
+    min-width: 34px;
+    font-size: 11px;
+  }
+
+  .btn-sfx-mode {
+    min-height: 36px;
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+
+  /* 選取範圍：滑桿與按鈕都加大 */
+  #rangeTrack {
+    height: 40px;
+  }
+
+  #rangeTrack input {
+    height: 40px;
+  }
+
+  #rangeTrack input::-webkit-slider-runnable-track,
+  #rangeTrack input::-moz-range-track {
+    margin-top: 17.5px;
+  }
+
+  #rangeTrack input::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+    margin-top: -8.5px;
+  }
+
+  #rangeTrack input::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+  }
+
+  #measureSlider::-webkit-slider-thumb {
+    width: 24px;
+    height: 24px;
+    margin-top: -9px;
+  }
+
+  #rangeEnds button, #rangeActions button {
+    min-height: 38px;
+    font-size: 12px;
+  }
+
+  /* 起點/終點維持貼齊左右兩端，不要撐滿 */
+  #rangeEnds button {
+    flex: 0 0 auto;
+    min-width: 92px;
+  }
+
+  /* 手機版把「跳到起點／預覽」和「傳送」併成同一排，省下一整列的高度 */
+  #rangePanel {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.3fr;
+    gap: 6px;
+    align-items: center;
+  }
+
+  #rangeHeader, #rangeTrack, #rangeEnds {
+    grid-column: 1 / -1;
+    margin-bottom: 0;
+  }
+
+  #rangeActions {
+    grid-column: 1 / 3;
+    margin-bottom: 0;
+  }
+
+  .btn-export {
+    grid-column: 3;
+    min-height: 42px;
+    font-size: 13px;
+    padding: 8px 4px;
+  }
+
+  #rangeEnds, #rangeActions {
+    margin-bottom: 6px;
+  }
+
+  #rangeTrack {
+    height: 34px;
+    margin-bottom: 6px;
+  }
+
+  #rangeTrack input {
+    height: 34px;
+  }
+
+  #rangeTrack input::-webkit-slider-runnable-track,
+  #rangeTrack input::-moz-range-track {
+    margin-top: 14.5px;
+  }
+
+  #rangeHeader {
+    margin-bottom: 6px;
+  }
+
+  #measureSlider {
+    height: 32px;
   }
 }
 

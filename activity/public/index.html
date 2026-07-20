@@ -9,51 +9,69 @@
 <body>
 <div class="container">
   <header>
+    <!-- 設定鈕跟歌名同一條水平線：歌名看得到，這顆就一定看得到，
+         不會被 Discord 疊在最上方的活動列蓋住 -->
+    <div id="settingsMenu">
+      <button id="settingsToggle" class="btn-settings" title="倍速／流速／音量" disabled>⚙</button>
+    </div>
     <h1 id="songTitle">連線中…</h1>
     <div id="status" class="status-connecting">正在初始化 SDK…</div>
     <button id="retryBtn" class="btn-retry" style="display:none">🔄 重新連線</button>
     <div class="sub" id="metaLine"></div>
   </header>
 
+  <!-- 設定浮層：用 fixed 定位，開啟時由 JS 對齊到按鈕下方，
+       這樣不會被任何 overflow:hidden 的祖先切掉 -->
+  <div class="control-settings" id="settingsPanel" hidden>
+    <span class="speedbox">倍速
+      <input type="range" id="speedSlider" min="0.25" max="1" step="0.05" value="1" disabled>
+      <span id="speedVal">1.00×</span>
+    </span>
+    <span class="speedbox">流速
+      <input type="range" id="hsSlider" min="1" max="10" step="0.5" value="4.0" disabled>
+      <span id="hsVal">4.0</span>
+    </span>
+    <span class="speedbox">
+      <button id="sfxModeBtn" class="btn-sfx-mode" title="切換音效模式">🔉 簡易</button>
+      <input type="range" id="sfxSlider" min="0" max="1" step="0.05" value="0.5">
+      <span id="sfxVal">50%</span>
+    </span>
+    <span class="speedbox">
+      <button id="cleanCutBtn" class="btn-sfx-mode"
+        title="開：精準切在選取的 combo 上，結尾不多留（就算切斷 hold／slide）。關：結尾多留一點讓判定特效收完。">✂ 切的乾淨：開</button>
+    </span>
+  </div>
+
   <div class="main-content">
     <div class="left-panel">
-      <div id="stage">
-        <canvas id="chartCanvas"></canvas>
-        <div id="hud">
-          <span>BPM <b id="hudBpm">-</b></span>
-          <span>小節 <b id="hudMeasure">0</b> / <span id="hudMeasureMax">-</span></span>
-          <span>Combo <b id="hudCombo">0</b> / <span id="hudComboMax">-</span></span>
+      <!-- 播放資訊獨立一行，不疊在譜面上 -->
+      <div id="hud">
+        <span>BPM <b id="hudBpm">-</b></span>
+        <span>小節 <b id="hudMeasure">0</b> / <span id="hudMeasureMax">-</span></span>
+        <span>Combo <b id="hudCombo">0</b> / <span id="hudComboMax">-</span></span>
+      </div>
+
+      <!-- 導覽鍵分列譜面兩側：左＝後退、右＝前進 -->
+      <div class="player-row">
+        <div class="nav-col">
+          <button id="b_m5" title="後退5小節" disabled>＜＜＜</button>
+          <button id="b_m1" title="後退1小節" disabled>＜＜</button>
+          <button id="b_f1" title="微調 -0.1s" disabled>＜</button>
+        </div>
+
+        <div id="stage">
+          <canvas id="chartCanvas"></canvas>
+        </div>
+
+        <div class="nav-col">
+          <button id="b_p5" title="前進5小節" disabled>＞＞＞</button>
+          <button id="b_p1" title="前進1小節" disabled>＞＞</button>
+          <button id="b_f2" title="微調 +0.1s" disabled>＞</button>
         </div>
       </div>
 
       <div class="controls">
-        <div class="control-buttons">
-          <button id="b_m5" title="後退5小節" disabled>＜＜＜</button>
-          <button id="b_m1" title="後退1小節" disabled>＜＜</button>
-          <button id="b_f1" title="微調 -0.1s" disabled>＜</button>
-          <button id="playBtn" disabled>▶</button>
-          <button id="b_f2" title="微調 +0.1s" disabled>＞</button>
-          <button id="b_p1" title="前進1小節" disabled>＞＞</button>
-          <button id="b_p5" title="前進5小節" disabled>＞＞＞</button>
-        </div>
-        <div class="control-settings">
-          <span class="speedbox">倍速
-            <select id="speedSel" disabled>
-              <option value="0.25">0.25×</option>
-              <option value="0.5">0.5×</option>
-              <option value="0.75">0.75×</option>
-              <option value="1" selected>1.0×</option>
-            </select>
-          </span>
-          <span class="speedbox">流速
-            <input type="range" id="hsSlider" min="1" max="10" step="0.5" value="4.0" style="width:75px" disabled>
-            <span id="hsVal">4.0</span>
-          </span>
-          <span class="speedbox">🔊
-            <input type="range" id="sfxSlider" min="0" max="1" step="0.05" value="0.5" style="width:65px">
-            <span id="sfxVal">50%</span>
-          </span>
-        </div>
+        <button id="playBtn" disabled>▶</button>
       </div>
     </div>
 
@@ -65,19 +83,26 @@
         <div id="measureTicks"></div>
 
         <div id="rangePanel">
-          <div id="rangeInfo">
-            <b class="range-title">GIF範圍</b>
+          <div id="rangeHeader">
+            <span class="range-title">✂️ 選取並傳送</span>
             <span id="rangeLabel">0 - 0</span>
-            <button id="setStart" disabled>起點=目前</button>
-            <button id="setEnd" disabled>終點=目前</button>
-            <button id="goStart" disabled>跳到起點</button>
-            <button id="previewRange" disabled>▶ 預覽</button>
-            <button id="exportGifBtn" class="btn-export" disabled>🎬 渲染並傳送此區間</button>
           </div>
           <div id="rangeTrack">
-            <input id="rangeA" type="range" min="0" value="0" step="1" disabled>
-            <input id="rangeB" type="range" min="0" value="0" step="1" disabled>
+            <div class="range-track-bg"></div>
+            <div class="range-track-fill" id="rangeFill"></div>
+            <!-- 終點預設就放在最右端：載入完成前兩個滑塊才不會疊在最左邊 -->
+            <input id="rangeA" type="range" min="0" max="100" value="0" step="1" disabled>
+            <input id="rangeB" type="range" min="0" max="100" value="100" step="1" disabled>
           </div>
+          <div id="rangeEnds">
+            <button id="setStart" disabled>← 起點</button>
+            <button id="setEnd" disabled>終點 →</button>
+          </div>
+          <div id="rangeActions">
+            <button id="goStart" disabled>跳到起點</button>
+            <button id="previewRange" disabled>▶ 預覽</button>
+          </div>
+          <button id="exportGifBtn" class="btn-export" disabled>✅ 傳送此區間</button>
         </div>
       </div>
 

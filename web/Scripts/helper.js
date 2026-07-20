@@ -1,5 +1,3 @@
-import { idbGet, idbSet } from "./indexDB.js";
-
 export const
     scaleBase = 100,
     innerCirleBase = (() => { const innerCirleScale = 0.889; return scaleBase * innerCirleScale / 2 })();
@@ -390,6 +388,13 @@ class AudioManager {
         };
         this.scheduledSources = [];
 
+        // 靜音時 play() 直接跳過，佇列照常運作（維持 note 的播放狀態機一致）
+        this.muted = false;
+        // 開啟後，找不到已載入的音效檔時改用即時合成的短音頂替。
+        // 用途：讓「簡易音效」模式不需下載任何檔案就能發聲，也讓「完整音效」
+        // 在 wav 還在背景載入的期間不會靜音，載完後自動改用真正的音效。
+        this.synthFallback = false;
+
         // 追蹤時間以實施重試節流 (Throttle)
         this.lastResumeAttemptTime = 0;
         this.lastReinitTime = 0;
@@ -611,6 +616,64 @@ class AudioManager {
         }
     }
 
+    /**
+     * 「簡易音效」的合成規格：每個音效 key 對應一個極短的振盪器點擊音。
+     * 回傳 null 代表這個 key 在簡易模式下不發聲（例如 answer 幾乎每顆音符都會觸發，
+     * 若一起合成會和主要判定音疊在一起變得吵雜）。
+     */
+    _synthSpec(key) {
+        switch (key) {
+            case 'judge': return { freq: 2000, dur: 0.03, type: 'square', gain: 0.5 };
+            case 'judge_ex': return { freq: 2200, dur: 0.03, type: 'square', gain: 0.5 };
+            case 'judge_break': return { freq: 2600, dur: 0.05, type: 'square', gain: 0.8 };
+            case 'judge_break_slide': return { freq: 2400, dur: 0.05, type: 'square', gain: 0.7 };
+            case 'break': return { freq: 1200, dur: 0.06, type: 'sawtooth', gain: 0.6 };
+            case 'break_slide_start': return { freq: 1800, dur: 0.05, type: 'sawtooth', gain: 0.6 };
+            case 'slide': return { freq: 900, dur: 0.05, type: 'triangle', gain: 0.7 };
+            case 'touch': return { freq: 1500, dur: 0.03, type: 'sine', gain: 0.8 };
+            case 'hanabi': return { freq: 2800, dur: 0.08, type: 'triangle', gain: 0.7 };
+            case 'clock': return { freq: 1000, dur: 0.02, type: 'square', gain: 0.8 };
+            default: return null;
+        }
+    }
+
+    /** 以振盪器即時合成一個短音，取代尚未載入（或不打算載入）的音效檔 */
+    _playSynth(key, volume = 1, playTime = null) {
+        const spec = this._synthSpec(key);
+        if (!spec || !this.ctx) return;
+
+        const start = Math.max(this.ctx.currentTime, playTime ?? this.ctx.currentTime);
+        const end = start + spec.dur;
+
+        try {
+            const osc = this.ctx.createOscillator();
+            osc.type = spec.type;
+            osc.frequency.setValueAtTime(spec.freq, start);
+
+            const gainNode = this.ctx.createGain();
+            // 方波／鋸齒波本身很響，統一再乘一個係數避免比真實音效大聲
+            const peak = Math.max(0.0001, volume * spec.gain * 0.25);
+            gainNode.gain.setValueAtTime(0.0001, start);
+            gainNode.gain.exponentialRampToValueAtTime(peak, start + 0.001);
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, end);
+
+            osc.connect(gainNode);
+            gainNode.connect(this.sfxGainNode);
+
+            osc.start(start);
+            osc.stop(end);
+
+            this.scheduledSources.push(osc);
+            osc.onended = () => {
+                const i = this.scheduledSources.indexOf(osc);
+                if (i !== -1) this.scheduledSources.splice(i, 1);
+                try { gainNode.disconnect(); } catch (e) { }
+            };
+        } catch (e) {
+            console.warn('[Audio] 合成音播放失敗:', e);
+        }
+    }
+
     stopAllScheduledSounds() {
         for (const src of this.scheduledSources) {
             try {
@@ -672,14 +735,11 @@ class AudioManager {
 
         const loadTasks = Object.entries(this.soundFiles).map(async ([key, url]) => {
             try {
-                let arrayBuffer = await idbGet(`sfx_cache_${key}`);
-
-                if (!arrayBuffer) {
-                    const response = await fetch(url);
-                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                    arrayBuffer = await response.arrayBuffer();
-                    await idbSet(`sfx_cache_${key}`, arrayBuffer);
-                }
+                // 註：不把音效原始資料存進 IndexedDB 快取，理由同 getImgWithCache——
+                // iOS WKWebView 同時讀取大量 IndexedDB 資料時有原生層級當機的風險。
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const arrayBuffer = await response.arrayBuffer();
 
                 const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer.slice(0));
                 this.bufferMap.set(key, audioBuffer);
@@ -828,9 +888,13 @@ class AudioManager {
      * 執行最終播放 (Web Audio API 核心)
      */
     play(key, isMono = false, volume = 1, playTime = null) {
+        if (this.muted) return;
         this.ensureContextSync();
         const buffer = this.bufferMap.get(key);
-        if (!buffer) return;
+        if (!buffer) {
+            if (this.synthFallback) this._playSynth(key, volume, playTime);
+            return;
+        }
 
         // Mono 模式處理 (預約在未來新音效開始播放時才中斷舊音效，避免提早中斷產生靜音間隙)
         if (isMono && this.playingSources.has(key)) {
@@ -1633,23 +1697,21 @@ export async function loadAllImages(onProgress) {
     return images;
 }
 async function getImgWithCache(url, key) {
-    // 1. 嘗試從 IndexedDB 取得 Blob
-    let blob = await idbGet(`img_cache_${key}`);
-
-    if (!blob) {
-        // 2. 沒快取則抓取網路資料
-        try {
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`HTTP status ${response.status}`);
-            }
-            blob = await response.blob();
-            // 3. 存入 IndexedDB
-            await idbSet(`img_cache_${key}`, blob);
-        } catch (e) {
-            console.error(`圖片載入失敗: ${url}`, e);
-            throw e; // 拋出錯誤以利呼叫端捕獲
+    // 註：這裡刻意不把圖片 Blob 存進 IndexedDB 快取。
+    // iOS WKWebView 在同時讀取大量 Blob 型別的 IndexedDB 資料時，曾觀察到會直接讓整個
+    // WebView 被系統砍掉（沒有任何 JS 錯誤、沒有 pagehide，是原生層級的當機），
+    // 且只在「第二次以後」（即 IndexedDB 已經有快取資料可讀）才會發生。
+    // 這些圖片都是同源的靜態小檔案，直接每次 fetch 即可，不值得冒這個風險。
+    let blob;
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP status ${response.status}`);
         }
+        blob = await response.blob();
+    } catch (e) {
+        console.error(`圖片載入失敗: ${url}`, e);
+        throw e; // 拋出錯誤以利呼叫端捕獲
     }
 
     if (!blob) {
