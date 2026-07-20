@@ -12351,12 +12351,33 @@ var rA = $("rangeA");
 var rB = $("rangeB");
 var params = new URLSearchParams(window.location.search);
 var clientId = params.get("client_id") || "1527644569133649960";
+var SESSION_CONFLICT_HINTS = [
+  "4006",
+  // Session resumption invalid
+  "4009",
+  // Session timeout
+  "invalidated",
+  "closed",
+  "terminated",
+  "destroyed"
+];
+function isSessionConflict(msg) {
+  const s = String(msg).toLowerCase();
+  return SESSION_CONFLICT_HINTS.some((k) => s.includes(k));
+}
 window.onerror = function(message, source, lineno, colno, error) {
+  if (source && !source.includes("main.js") && !source.includes("localhost")) return true;
   statusEl.textContent = `JS \u932F\u8AA4\uFF1A${message} (L${lineno})`;
   statusEl.className = "status status-error";
 };
 window.onunhandledrejection = function(event) {
-  statusEl.textContent = `\u672A\u8655\u7406\u7684 Rejection\uFF1A${event.reason?.message || event.reason}`;
+  const msg = event.reason?.message || String(event.reason);
+  if (isSessionConflict(msg)) {
+    showSessionConflictError();
+    event.preventDefault();
+    return;
+  }
+  statusEl.textContent = `\u672A\u8655\u7406\u7684 Rejection\uFF1A${msg}`;
   statusEl.className = "status status-error";
 };
 var discordSdk = new DiscordSDK(clientId, { disableConsoleLogOverride: true });
@@ -12843,8 +12864,47 @@ function showMessage(text, type) {
   messageEl.textContent = text;
   messageEl.className = `message ${type}`;
 }
-setup().catch((e) => {
-  console.error(e);
-  statusEl.textContent = `\u521D\u59CB\u5316\u5931\u6557\uFF1A${e.message}`;
+var retryBtn = $("retryBtn");
+var setupRunning = false;
+function showSessionConflictError() {
+  songTitleEl.textContent = "\u9023\u7DDA\u4E2D\u65B7";
+  statusEl.textContent = "\u26A0\uFE0F \u6B64 Activity \u5DF2\u5728\u53E6\u4E00\u88DD\u7F6E\u958B\u555F\uFF0C\u8ACB\u95DC\u9589\u5176\u4ED6\u88DD\u7F6E\u5F8C\u9EDE\u64CA\u300C\u91CD\u65B0\u9023\u7DDA\u300D\u3002";
   statusEl.className = "status status-error";
+  retryBtn.style.display = "";
+}
+function showSetupError(e) {
+  const msg = e?.message || String(e);
+  if (isSessionConflict(msg)) {
+    showSessionConflictError();
+  } else {
+    songTitleEl.textContent = "\u9023\u7DDA\u4E2D\u65B7";
+    statusEl.textContent = `\u521D\u59CB\u5316\u5931\u6557\uFF1A${msg}`;
+    statusEl.className = "status status-error";
+    retryBtn.style.display = "";
+  }
+  setupRunning = false;
+}
+async function runSetup() {
+  if (setupRunning) return;
+  setupRunning = true;
+  retryBtn.style.display = "none";
+  songTitleEl.textContent = "\u9023\u7DDA\u4E2D\u2026";
+  try {
+    await setup();
+    setupRunning = false;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && !playing) {
+        showMessage("\u{1F4A1} \u82E5\u767B\u5165\u6216\u5207\u63DB\u4E86\u88DD\u7F6E\uFF0C\u5EFA\u8B70\u9EDE\u64CA\u300C\u91CD\u65B0\u9023\u7DDA\u300D\u4EE5\u78BA\u8A8D\u9023\u7DDA\u72C0\u614B\u3002", "info");
+        retryBtn.style.display = "";
+      }
+    }, { once: true });
+  } catch (e) {
+    console.error(e);
+    showSetupError(e);
+  }
+}
+retryBtn.addEventListener("click", () => {
+  showMessage("", "");
+  runSetup();
 });
+runSetup();

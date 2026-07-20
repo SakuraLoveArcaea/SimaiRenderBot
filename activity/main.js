@@ -19,14 +19,38 @@ const rA = $('rangeA'), rB = $('rangeB');
 const params = new URLSearchParams(window.location.search);
 const clientId = params.get('client_id') || '1527644569133649960';
 
-// 全域錯誤監聽：若有任何 JS 運行或 Promise 錯誤，直接顯示在畫面上，方便開發排查
+// 常見的多裝置 / Session 衝突錯誤訊息鍵字
+const SESSION_CONFLICT_HINTS = [
+  '4006',    // Session resumption invalid
+  '4009',    // Session timeout
+  'invalidated',
+  'closed',
+  'terminated',
+  'destroyed',
+];
+
+function isSessionConflict(msg) {
+  const s = String(msg).toLowerCase();
+  return SESSION_CONFLICT_HINTS.some(k => s.includes(k));
+}
+
+// 全域錯誤監聽：只發展自己程式碼的錯誤（過濾揚 SDK 內部錯誤）
 window.onerror = function (message, source, lineno, colno, error) {
+  // 忽略來自第三方 SDK bundle 的錯誤
+  if (source && !source.includes('main.js') && !source.includes('localhost')) return true;
   statusEl.textContent = `JS 錯誤：${message} (L${lineno})`;
   statusEl.className = 'status status-error';
 };
 
 window.onunhandledrejection = function (event) {
-  statusEl.textContent = `未處理的 Rejection：${event.reason?.message || event.reason}`;
+  // 忽略接受來自 SDK 內部的 rejection
+  const msg = event.reason?.message || String(event.reason);
+  if (isSessionConflict(msg)) {
+    showSessionConflictError();
+    event.preventDefault();
+    return;
+  }
+  statusEl.textContent = `未處理的 Rejection：${msg}`;
   statusEl.className = 'status status-error';
 };
 
@@ -596,8 +620,57 @@ function showMessage(text, type) {
   messageEl.className = `message ${type}`;
 }
 
-setup().catch((e) => {
-  console.error(e);
-  statusEl.textContent = `初始化失敗：${e.message}`;
+// ---------- 多裝置 Session 衝突處理 ----------
+
+const retryBtn = $('retryBtn');
+let setupRunning = false;
+
+function showSessionConflictError() {
+  songTitleEl.textContent = '連線中斷';
+  statusEl.textContent = '⚠️ 此 Activity 已在另一裝置開啟，請關閉其他裝置後點擊「重新連線」。';
   statusEl.className = 'status status-error';
+  retryBtn.style.display = '';
+}
+
+function showSetupError(e) {
+  const msg = e?.message || String(e);
+  if (isSessionConflict(msg)) {
+    showSessionConflictError();
+  } else {
+    songTitleEl.textContent = '連線中斷';
+    statusEl.textContent = `初始化失敗：${msg}`;
+    statusEl.className = 'status status-error';
+    retryBtn.style.display = '';
+  }
+  setupRunning = false;
+}
+
+async function runSetup() {
+  if (setupRunning) return;
+  setupRunning = true;
+  retryBtn.style.display = 'none';
+  songTitleEl.textContent = '連線中…';
+  try {
+    await setup();
+    setupRunning = false;
+
+    // 初始化成功後，監聽頁面隱藏 / 顯示：
+    // 如果 Activity 在最低化後再次顯示，提示用戶可能需要重連
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && !playing) {
+        showMessage('💡 若登入或切換了裝置，建議點擊「重新連線」以確認連線狀態。', 'info');
+        retryBtn.style.display = '';
+      }
+    }, { once: true });
+  } catch (e) {
+    console.error(e);
+    showSetupError(e);
+  }
+}
+
+retryBtn.addEventListener('click', () => {
+  showMessage('', '');
+  runSetup();
 });
+
+runSetup();

@@ -115,6 +115,22 @@ header h1 {
   margin-top: 4px;
 }
 
+.btn-retry {
+  margin-top: 8px;
+  background: #2a2a55;
+  color: var(--text);
+  border: 1px solid #5865f2;
+  border-radius: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .12s;
+  display: block;
+}
+.btn-retry:hover {
+  background: #5865f2;
+}
+
 header .sub {
   color: var(--dim);
   font-size: 11px;
