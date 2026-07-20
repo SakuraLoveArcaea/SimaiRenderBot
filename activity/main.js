@@ -375,10 +375,35 @@ function currentComboIndex() {
   return idx === -1 ? N.length - 1 : idx;
 }
 
+const MAX_RENDER_SEC = 30;
+
+function getRangeDuration() {
+  if (!N || N.length === 0) return 0;
+  const startTime = N[range.start]?.time ?? 0;
+  const endTime = (N[range.end]?.time ?? DATA?.meta.endTime ?? 0) + 0.8;
+  return Math.max(0, endTime - startTime);
+}
+
 function syncRange() {
   range.start = Math.min(+rA.value, +rB.value);
   range.end = Math.max(+rA.value, +rB.value);
-  $('rangeLabel').textContent = `Combo ${range.start} - ${range.end}`;
+
+  const dur = getRangeDuration();
+  const noteCount = range.end - range.start + 1;
+
+  let label = `Combo ${range.start} - ${range.end}`;
+  if (noteCount <= 0) {
+    label += '  ⚠️ 空區間';
+    showMessage('⚠️ 選取範圍內沒有音符，無法渲染。', 'error');
+  } else if (dur > MAX_RENDER_SEC) {
+    label += `  ⚠️ ~${dur.toFixed(1)}s（超過 ${MAX_RENDER_SEC}s 上限，將被截斷）`;
+    showMessage(`⚠️ 所選區間約 ${dur.toFixed(1)} 秒，超過 ${MAX_RENDER_SEC} 秒上限，GIF 將只渲染前 ${MAX_RENDER_SEC} 秒。`, 'error');
+  } else {
+    label += `  (~${dur.toFixed(1)}s)`;
+    showMessage('', '');
+  }
+
+  $('rangeLabel').textContent = label;
   drawDensity(measureIndex(realTime));
 }
 rA.addEventListener('input', syncRange);
@@ -417,11 +442,19 @@ $('hsSlider').addEventListener('input', e => {
 
 // ---------- GIF 渲染並傳送 ----------
 $('exportGifBtn').onclick = async () => {
+  // 前端防護：空區間檢查
+  const noteCount = range.end - range.start + 1;
+  if (noteCount <= 0) {
+    showMessage('⚠️ 選取範圍內沒有音符，請重新選取。', 'error');
+    return;
+  }
+
   setInputsDisabled(true);
   showMessage('🎬 正在向 Bot 發送渲染請求，請稍候…', 'info');
 
   const startCombo = range.start;
   const endCombo = range.end;
+  const dur = getRangeDuration();
 
   try {
     const res = await fetch('/.proxy/api/render', {
@@ -440,19 +473,22 @@ $('exportGifBtn').onclick = async () => {
     const data = await res.json().catch(() => ({}));
 
     if (res.ok) {
-      showMessage('✅ 請求成功！正在關閉視窗並在頻道中開始渲染…', 'success');
+      const truncNote = dur > MAX_RENDER_SEC ? `（僅渲染前 ${MAX_RENDER_SEC} 秒）` : '';
+      showMessage(`✅ 請求成功${truncNote}！正在關閉視窗並在頻道中開始渲染…`, 'success');
+      // 送出成功後保持 disabled，等待視窗關閉，不重新啟用按鈕
       setTimeout(() => {
-        Promise.resolve(discordSdk.close()).catch(err => console.error("Failed to close activity:", err));
+        Promise.resolve(discordSdk.close()).catch(err => console.error('Failed to close activity:', err));
       }, 800);
+      return; // 不執行 finally 的 setInputsDisabled(false)
     } else {
       showMessage(`❌ 渲染失敗：${data.error || res.statusText}`, 'error');
     }
   } catch (e) {
     console.error('Export request failed:', e);
     showMessage(`❌ 網路錯誤，無法傳送請求：${e.message}`, 'error');
-  } finally {
-    setInputsDisabled(false);
   }
+  // 只有失敗的情況才重新啟用 UI
+  setInputsDisabled(false);
 };
 
 // ---------- 繪製邏輯 ----------

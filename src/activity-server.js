@@ -15,10 +15,15 @@ const MIME = {
     '.ttf': 'font/ttf',
 };
 
+/** 每位用戶的冷卻記錄（userId -> timestamp），防止重複觸發渲染 */
+const renderCooldowns = new Map();
+const RENDER_COOLDOWN_MS = 60_000; // 60 秒冷卻
+const SIMAI_MAX_BYTES = 200_000;   // 200KB 大小上限
+
 /**
- * 【測試用】Discord Activity 的後端：靜態頁面 + OAuth token 交換 + 按鈕通知。
+ * Discord Activity 的後端：靜態頁面 + OAuth token 交換 + 渲染通知。
  * 跟 server.js（給 puppeteer 用的內部渲染伺服器）無關，這個是要給 Discord 用戶端
- * 透過 `/.proxy/...` 存取的，所以綁 0.0.0.0，測試時要搭配 cloudflared 這類 tunnel openen 對外。
+ * 透過 `/.proxy/...` 存取的，所以綁 0.0.0.0，測試時要搭配 cloudflared 這類 tunnel 對外。
  */
 export function startActivityServer(client, service) {
     const appId = process.env.DISCORD_APP_ID;
@@ -63,8 +68,8 @@ export function startActivityServer(client, service) {
 }
 
 async function handleStatic(pathname, res) {
-    const safePath = path.normalize(pathname).replace(/^(\.\.[/\\])+/, '');
-    
+    const safePath = path.normalize(pathname).replace(/^(\.\.[\\/])+/, '');
+
     // 優先讀取 activity/public/ 的檔案
     const filePath = path.join(PUBLIC_ROOT, safePath === '/' ? 'index.html' : safePath);
     if (filePath.startsWith(PUBLIC_ROOT)) {
@@ -152,12 +157,45 @@ async function handleNotify(req, res, client) {
 /** 互動頁面渲染請求：呼叫渲染引擎產出 GIF 並發到對應頻道 */
 async function handleRender(req, res, client, service) {
     const { channelId, userId, username, simai, startCombo, endCombo } = await readJsonBody(req);
+
+    // 1. 基本欄位檢查
     if (!channelId || !simai) {
         res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: '缺少 channelId 或 simai' }));
         return;
     }
+
+    // 2. simai 大小限制（防止 DoS）
+    if (Buffer.byteLength(simai, 'utf8') > SIMAI_MAX_BYTES) {
+        res.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: `譜面文字過大（上限 ${SIMAI_MAX_BYTES / 1000}KB）` }));
+        return;
+    }
+
+    // 3. Combo 索引類型驗證
+    if (typeof startCombo !== 'number' || typeof endCombo !== 'number' || !isFinite(startCombo) || !isFinite(endCombo)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'startCombo / endCombo 必須為有限數字' }));
+        return;
+    }
+    if (startCombo > endCombo) {
+        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'startCombo 不能大於 endCombo' }));
+        return;
+    }
+
+    // 4. 每位用戶冷卻檢查（60 秒內只能渲染一次）
+    if (userId) {
+        const lastTime = renderCooldowns.get(userId);
+        if (lastTime && Date.now() - lastTime < RENDER_COOLDOWN_MS) {
+            const remaining = Math.ceil((RENDER_COOLDOWN_MS - (Date.now() - lastTime)) / 1000);
+            res.writeHead(429, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+                error: `渲染請求太頻繁，請等待 ${remaining} 秒後再試。`
+            }));
+            return;
+        }
+        renderCooldowns.set(userId, Date.now());
+    }
+
     const channel = await client.channels.fetch(channelId).catch(() => null);
     if (!channel) {
+        if (userId) renderCooldowns.delete(userId);
         res.writeHead(404, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: '找不到頻道' }));
         return;
     }
@@ -165,15 +203,19 @@ async function handleRender(req, res, client, service) {
     try {
         // 利用 comboInfo 來解析並換算開始與結束時間
         const { comboTimes, endTime } = await service.comboInfo(simai);
-        
-        let start = 0;
-        let end = endTime;
-        if (typeof startCombo === 'number' && startCombo >= 0 && startCombo < comboTimes.length) {
-            start = comboTimes[startCombo];
-        }
-        if (typeof endCombo === 'number' && endCombo >= 0 && endCombo < comboTimes.length) {
-            // 結束點多加 0.8 秒以確保最後一顆 Note 的特效能畫完
-            end = Math.min(endTime, comboTimes[endCombo] + 0.8);
+
+        // 5. Combo 索引越界 Clamp
+        const safeStart = Math.max(0, Math.min(Math.floor(startCombo), comboTimes.length - 1));
+        const safeEnd   = Math.max(0, Math.min(Math.floor(endCombo),   comboTimes.length - 1));
+
+        const start = comboTimes[safeStart] ?? 0;
+        const end   = Math.min(endTime, (comboTimes[safeEnd] ?? endTime) + 0.8);
+
+        // 6. 空區間防護
+        if (end <= start) {
+            if (userId) renderCooldowns.delete(userId);
+            res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: '選取範圍為空區間，無法渲染' }));
+            return;
         }
 
         const notesInRange = comboTimes.filter(t => t >= start && t <= end).length;
@@ -186,38 +228,37 @@ async function handleRender(req, res, client, service) {
             allowedMentions: { users: [userId] }
         });
 
-        // 立即回覆前端 200 OK，讓前端可以立刻關閉 Activity 視窗，不需要等待渲染
+        // 立即回覆前端 200 OK，讓前端可以立刻關閉 Activity 視窗
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }));
 
         // 在背景非同步執行實際渲染與傳送
         (async () => {
             try {
-                const renderOpts = { maxDuration: 30 };
-                if (typeof start === 'number' && !isNaN(start)) renderOpts.start = start;
-                if (typeof end === 'number' && !isNaN(end)) renderOpts.end = end;
-
+                const renderOpts = { maxDuration: 30, start, end };
                 const { gif } = await service.renderGif(simai, renderOpts);
 
                 await channel.send({
-                    content: userId 
-                        ? `<@${userId}>（${username ?? '未知'}）的譜面預覽 GIF 渲染完成：` 
+                    content: userId
+                        ? `<@${userId}>（${username ?? '未知'}）的譜面預覽 GIF 渲染完成：`
                         : `🎬 譜面預覽 GIF 渲染完成：`,
                     files: [{ attachment: gif, name: 'render.gif' }],
                     allowedMentions: userId ? { users: [userId] } : undefined,
                 });
             } catch (e) {
                 console.error('[async-render-error]', e);
+                // 渲染失敗，清除冷卻以允許用戶重試
+                if (userId) renderCooldowns.delete(userId);
                 await channel.send({
                     content: `❌ <@${userId}> 譜面預覽渲染失敗：${e.message || String(e)}`,
                     allowedMentions: { users: [userId] }
                 });
             } finally {
-                // 刪除進度提示訊息
                 await progressMsg.delete().catch(() => null);
             }
         })();
     } catch (e) {
         console.error('[activity-server-render]', e);
+        if (userId) renderCooldowns.delete(userId);
         res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: e.message || String(e) }));
     }
 }
@@ -234,5 +275,3 @@ async function handleGetChart(req, res) {
         res.writeHead(500, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: e.message || String(e) }));
     }
 }
-
-

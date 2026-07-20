@@ -12655,10 +12655,30 @@ function currentComboIndex() {
   const idx = N.findIndex((n) => n.time >= realTime);
   return idx === -1 ? N.length - 1 : idx;
 }
+var MAX_RENDER_SEC = 30;
+function getRangeDuration() {
+  if (!N || N.length === 0) return 0;
+  const startTime = N[range.start]?.time ?? 0;
+  const endTime = (N[range.end]?.time ?? DATA?.meta.endTime ?? 0) + 0.8;
+  return Math.max(0, endTime - startTime);
+}
 function syncRange() {
   range.start = Math.min(+rA.value, +rB.value);
   range.end = Math.max(+rA.value, +rB.value);
-  $("rangeLabel").textContent = `Combo ${range.start} - ${range.end}`;
+  const dur = getRangeDuration();
+  const noteCount = range.end - range.start + 1;
+  let label = `Combo ${range.start} - ${range.end}`;
+  if (noteCount <= 0) {
+    label += "  \u26A0\uFE0F \u7A7A\u5340\u9593";
+    showMessage("\u26A0\uFE0F \u9078\u53D6\u7BC4\u570D\u5167\u6C92\u6709\u97F3\u7B26\uFF0C\u7121\u6CD5\u6E32\u67D3\u3002", "error");
+  } else if (dur > MAX_RENDER_SEC) {
+    label += `  \u26A0\uFE0F ~${dur.toFixed(1)}s\uFF08\u8D85\u904E ${MAX_RENDER_SEC}s \u4E0A\u9650\uFF0C\u5C07\u88AB\u622A\u65B7\uFF09`;
+    showMessage(`\u26A0\uFE0F \u6240\u9078\u5340\u9593\u7D04 ${dur.toFixed(1)} \u79D2\uFF0C\u8D85\u904E ${MAX_RENDER_SEC} \u79D2\u4E0A\u9650\uFF0CGIF \u5C07\u53EA\u6E32\u67D3\u524D ${MAX_RENDER_SEC} \u79D2\u3002`, "error");
+  } else {
+    label += `  (~${dur.toFixed(1)}s)`;
+    showMessage("", "");
+  }
+  $("rangeLabel").textContent = label;
   drawDensity(measureIndex(realTime));
 }
 rA.addEventListener("input", syncRange);
@@ -12692,10 +12712,16 @@ $("hsSlider").addEventListener("input", (e) => {
   draw(realTime, 0);
 });
 $("exportGifBtn").onclick = async () => {
+  const noteCount = range.end - range.start + 1;
+  if (noteCount <= 0) {
+    showMessage("\u26A0\uFE0F \u9078\u53D6\u7BC4\u570D\u5167\u6C92\u6709\u97F3\u7B26\uFF0C\u8ACB\u91CD\u65B0\u9078\u53D6\u3002", "error");
+    return;
+  }
   setInputsDisabled(true);
   showMessage("\u{1F3AC} \u6B63\u5728\u5411 Bot \u767C\u9001\u6E32\u67D3\u8ACB\u6C42\uFF0C\u8ACB\u7A0D\u5019\u2026", "info");
   const startCombo = range.start;
   const endCombo = range.end;
+  const dur = getRangeDuration();
   try {
     const res = await fetch("/.proxy/api/render", {
       method: "POST",
@@ -12711,19 +12737,20 @@ $("exportGifBtn").onclick = async () => {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      showMessage("\u2705 \u8ACB\u6C42\u6210\u529F\uFF01\u6B63\u5728\u95DC\u9589\u8996\u7A97\u4E26\u5728\u983B\u9053\u4E2D\u958B\u59CB\u6E32\u67D3\u2026", "success");
+      const truncNote = dur > MAX_RENDER_SEC ? `\uFF08\u50C5\u6E32\u67D3\u524D ${MAX_RENDER_SEC} \u79D2\uFF09` : "";
+      showMessage(`\u2705 \u8ACB\u6C42\u6210\u529F${truncNote}\uFF01\u6B63\u5728\u95DC\u9589\u8996\u7A97\u4E26\u5728\u983B\u9053\u4E2D\u958B\u59CB\u6E32\u67D3\u2026`, "success");
       setTimeout(() => {
         Promise.resolve(discordSdk.close()).catch((err) => console.error("Failed to close activity:", err));
       }, 800);
+      return;
     } else {
       showMessage(`\u274C \u6E32\u67D3\u5931\u6557\uFF1A${data.error || res.statusText}`, "error");
     }
   } catch (e) {
     console.error("Export request failed:", e);
     showMessage(`\u274C \u7DB2\u8DEF\u932F\u8AA4\uFF0C\u7121\u6CD5\u50B3\u9001\u8ACB\u6C42\uFF1A${e.message}`, "error");
-  } finally {
-    setInputsDisabled(false);
   }
+  setInputsDisabled(false);
 };
 function draw(t, dt = 0) {
   if (!renderer || !logic || !DATA) return;
