@@ -139,6 +139,21 @@ function formatTime(sec) {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+/**
+ * [start, end) 秒範圍內第一顆／最後一顆音符是第幾個 combo（1-based）。
+ * 逗號索引只在內部用來精準定位，Discord 訊息要顯示給人看的一律用 combo 編號，
+ * 跟 Activity 前端 syncRange() 的 comboRangeSpan() 算法保持一致。
+ */
+function comboRangeOf(comboTimes, start, end) {
+    const firstIdx = comboTimes.findIndex((t) => t >= start - 1e-6);
+    if (firstIdx === -1 || comboTimes[firstIdx] >= end - 1e-6) return null;
+    let lastIdx = firstIdx;
+    for (let i = comboTimes.length - 1; i >= firstIdx; i--) {
+        if (comboTimes[i] < end - 1e-6) { lastIdx = i; break; }
+    }
+    return { first: firstIdx + 1, last: lastIdx + 1 };
+}
+
 async function readRawBody(req) {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -196,7 +211,7 @@ async function handleNotify(req, res, client) {
 
 /** 互動頁面渲染請求：呼叫渲染引擎產出 GIF 並發到對應頻道 */
 async function handleRender(req, res, client, service) {
-    const { channelId, userId, username, simai, startCombo, endCombo, chartName, cleanCut } = await readJsonBody(req);
+    const { channelId, userId, username, simai, startComma, endComma, chartName, cleanCut } = await readJsonBody(req);
 
     // 「切的乾淨」：把選取範圍從 simai 原始碼切出來成一段獨立譜面（切到 hold／slide
     // 中間也照切），並補回開頭的 BPM／分音再送去渲染。關閉時沿用舊做法：送整份譜面
@@ -215,13 +230,13 @@ async function handleRender(req, res, client, service) {
         return;
     }
 
-    // 3. Combo 索引類型驗證
-    if (typeof startCombo !== 'number' || typeof endCombo !== 'number' || !isFinite(startCombo) || !isFinite(endCombo)) {
-        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'startCombo / endCombo 必須為有限數字' }));
+    // 3. Comma 索引類型驗證
+    if (typeof startComma !== 'number' || typeof endComma !== 'number' || !isFinite(startComma) || !isFinite(endComma)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'startComma / endComma 必須為有限數字' }));
         return;
     }
-    if (startCombo > endCombo) {
-        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'startCombo 不能大於 endCombo' }));
+    if (startComma > endComma) {
+        res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'startComma 不能大於 endComma' }));
         return;
     }
 
@@ -246,16 +261,20 @@ async function handleRender(req, res, client, service) {
     }
 
     try {
-        // 利用 comboInfo 來解析並換算開始與結束時間
+        // 利用 comboInfo 來解析，換算開始與結束時間直接用 indexToTime（逗號段時間軸），
+        // 選第幾個逗號就是切在第幾個逗號，不用再靠 note 時間近似猜切點。
         const info = await service.comboInfo(simai);
-        const { comboTimes, endTime } = info;
+        const { comboTimes, endTime, indexToTime } = info;
+        const commaCount = indexToTime.length - 1; // 最後一格是譜尾 sentinel，不是可選的逗號
 
-        // 5. Combo 索引越界 Clamp
-        const safeStart = Math.max(0, Math.min(Math.floor(startCombo), comboTimes.length - 1));
-        const safeEnd   = Math.max(0, Math.min(Math.floor(endCombo),   comboTimes.length - 1));
+        // 5. Comma 索引越界 Clamp
+        const safeStart = Math.max(0, Math.min(Math.floor(startComma), commaCount - 1));
+        const safeEnd   = Math.max(0, Math.min(Math.floor(endComma),   commaCount - 1));
 
-        const start = comboTimes[safeStart] ?? 0;
-        const end   = Math.min(endTime, (comboTimes[safeEnd] ?? endTime) + 0.8);
+        // 精準邊界：safeEnd 這個逗號段要整段包進去，得看「下一個逗號」的起點才對
+        const exactEnd = indexToTime[safeEnd + 1] ?? endTime;
+        const start = indexToTime[safeStart] ?? 0;
+        const end   = Math.min(endTime, exactEnd);
 
         // 6. 空區間防護
         if (end <= start) {
@@ -268,9 +287,12 @@ async function handleRender(req, res, client, service) {
         const estMs = service.estimateRenderMs(end - start, notesInRange);
         const estSec = Math.ceil(estMs / 1000);
 
+        const combo = comboRangeOf(comboTimes, start, exactEnd);
+        const comboLabel = combo ? `Combo ${combo.first} - ${combo.last}` : '（此區間沒有音符）';
+
         // 立即發送進度提示訊息到 Discord 頻道中
         const progressMsg = await channel.send({
-            content: `🎬 <@${userId}> 正在渲染所選區段的譜面（Combo ${startCombo} - ${endCombo}），預估約 ${estSec} 秒，請稍候…`,
+            content: `🎬 <@${userId}> 正在渲染所選區段的譜面（${comboLabel}），預估約 ${estSec} 秒，請稍候…`,
             allowedMentions: { users: [userId] }
         });
 
@@ -283,7 +305,7 @@ async function handleRender(req, res, client, service) {
                 // 切的乾淨：先把片段切出來（含補回開頭的 BPM／分音），整段從頭渲染；
                 // 否則沿用舊做法，送整份譜面並指定起訖時間。
                 const renderText = exact
-                    ? buildCleanCutSimai(simai, info, start, comboTimes[safeEnd] ?? endTime)
+                    ? buildCleanCutSimai(simai, info, start, exactEnd)
                     : simai;
                 const renderOpts = exact
                     ? { maxDuration: MAX_RENDER_SEC }
@@ -296,10 +318,10 @@ async function handleRender(req, res, client, service) {
                 const truncNote = truncated ? `（超過 ${MAX_RENDER_SEC}s，只渲染前 ${MAX_RENDER_SEC} 秒）` : '';
 
                 // 歌名 ＋ 段落（combo 區間與對應的時間）
-                const segment = `Combo ${safeStart}–${safeEnd}（${formatTime(start)}–${formatTime(shownEnd)}）`;
+                const segment = `${comboLabel}（${formatTime(start)}–${formatTime(shownEnd)}）`;
                 const title = chartName ? `**${chartName}**　` : '';
 
-                // 「繼續看譜」：帶著這段的 combo 區間，點下去會開啟 Activity 並還原到同一位置
+                // 「繼續看譜」：帶著這段的逗號區間，點下去會開啟 Activity 並還原到同一位置
                 const resumeBtn = new ButtonBuilder()
                     .setCustomId(`${RESUME_BTN_PREFIX}${safeStart}:${safeEnd}`)
                     .setLabel('▶ 繼續看譜')

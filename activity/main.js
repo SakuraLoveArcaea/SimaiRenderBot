@@ -2,6 +2,7 @@ import { DiscordSDK } from '@discord/embedded-app-sdk';
 import { simaiDecode } from '../web/Scripts/decode.js';
 import { SimaiRenderer } from '../web/Scripts/renderer.js';
 import { loadAllImages, SimaiLogicControler, scaleBase, audioManager } from '../web/Scripts/helper.js';
+import { buildCleanCutSimai, splitCommaParts } from '../web/Scripts/simaiCut.js';
 
 // 除錯用：手機上的 Discord App 內建 WebView 不開放 Safari 遠端除錯，看不到 console，
 // 所以改用 sendBeacon 把生命週期關鍵事件回報到我們自己的後端（印在 bot 的終端機），
@@ -49,7 +50,10 @@ const messageEl = $('message');
 
 const cv = $('chartCanvas'), ctx = cv.getContext('2d');
 const dv = $('densityCanvas'), dctx = dv.getContext('2d');
-const slider = $('measureSlider'), playBtn = $('playBtn');
+const slider = $('measureSlider');
+// 播放鍵分裝在左右導覽欄各一顆（不管左右手拿手機都點得到），狀態永遠同步
+const playBtnL = $('playBtnL'), playBtnR = $('playBtnR');
+const playBtns = [playBtnL, playBtnR];
 const rA = $('rangeA'), rB = $('rangeB');
 
 const params = new URLSearchParams(window.location.search);
@@ -87,6 +91,8 @@ let auth = null;
 let M = []; // 小節起始秒數
 let N = []; // 所有 Notes
 let D = []; // 各小節密度
+let C = []; // 逗號段起始秒數（indexToTime，最後一格是譜尾 sentinel）
+let commaParts = []; // 每個逗號段的原始 simai 文字（給端點框顯示用）
 let DATA = null;
 let chartText = ''; // 原始譜面內容
 
@@ -233,7 +239,8 @@ function processChartData(decoded) {
     measures: M_arr,
     density: D_arr,
     notes: decoded.notes,
-    tags: decoded.tags
+    tags: decoded.tags,
+    indexToTime: decoded.indexToTime || []
   };
 }
 
@@ -320,6 +327,8 @@ async function setup() {
   M = DATA.measures;
   N = DATA.notes;
   D = DATA.density;
+  C = DATA.indexToTime;
+  commaParts = splitCommaParts(chartText);
 
   renderer = new SimaiRenderer(cv, defaultSettings);
   renderer.setImages(images);
@@ -335,12 +344,13 @@ async function setup() {
 
   // 更新 Sliders 範圍與最大值
   slider.max = M.length - 1;
-  const maxCombo = N.length - 1;
-  rA.max = rB.max = maxCombo;
+  // C 最後一格是譜尾 sentinel，不是可選的逗號段；可選範圍是 0 ~ commaCount-1
+  const maxComma = C.length - 2;
+  rA.max = rB.max = maxComma;
   rA.value = 0;
-  rB.value = maxCombo;
+  rB.value = maxComma;
   range.start = 0;
-  range.end = maxCombo;
+  range.end = maxComma;
 
   // 啟用控制 UI
   setInputsDisabled(false);
@@ -354,19 +364,19 @@ async function setup() {
   setActiveEndpoint(null);
 
   // 若使用者是從訊息上的「繼續看譜」進來的，還原當初那一段的選取區間與播放位置
-  const resumed = await restoreResumeSession(maxCombo);
+  const resumed = await restoreResumeSession(maxComma);
 
   // 一般開啟（不是從「繼續看譜」進來）一律讓兩個端點回到最兩側＝整首全選。
   // 這裡重新指定一次，確保不受載入過程中任何順序問題影響。
   if (!resumed) {
     rA.value = 0;
-    rB.value = maxCombo;
+    rB.value = maxComma;
     range.start = 0;
-    range.end = maxCombo;
+    range.end = maxComma;
   }
 
   syncRange();
-  seek(resumed ? (N[range.start]?.time ?? 0) : 0);
+  seek(resumed ? (C[range.start] ?? 0) : 0);
   logRemote('setup:complete', resumed ? { resumed: [range.start, range.end] } : undefined);
 }
 
@@ -374,15 +384,15 @@ async function setup() {
  * 從後端取回「繼續看譜」要還原的區間（由 bot 端在按鈕被按下時暫存）。
  * 取得後套用到兩個 range 滑桿；沒有就維持預設全選。
  */
-async function restoreResumeSession(maxCombo) {
+async function restoreResumeSession(maxComma) {
   try {
     const res = await fetch(`/.proxy/api/resume?userId=${encodeURIComponent(auth.user.id)}`);
     if (!res.ok) return false;
     const s = await res.json();
-    if (typeof s.startCombo !== 'number' || typeof s.endCombo !== 'number') return false;
+    if (typeof s.startComma !== 'number' || typeof s.endComma !== 'number') return false;
 
-    const start = Math.max(0, Math.min(s.startCombo, maxCombo));
-    const end = Math.max(start, Math.min(s.endCombo, maxCombo));
+    const start = Math.max(0, Math.min(s.startComma, maxComma));
+    const end = Math.max(start, Math.min(s.endComma, maxComma));
     rA.value = start;
     rB.value = end;
     range.start = start;
@@ -414,8 +424,53 @@ function seek(t) {
   draw(realTime);
 }
 
-function jumpMeasure(d) {
-  seek(M[Math.max(0, Math.min(M.length - 1, measureIndex(realTime) + d))]);
+// ---------- 逗號導航：所有精準定位（選取範圍、進度點）都以逗號段為單位 ----------
+// commaIndexAt(t) 找出時間 t 落在第幾個逗號段（C 是遞增陣列，二分搜尋）；
+// C.length - 1 那格是譜尾 sentinel，不是真正的逗號，搜尋範圍要排除它。
+function commaIndexAt(t) {
+  let lo = 0, hi = C.length - 2;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    C[mid] <= t + 1e-6 ? lo = mid : hi = mid - 1;
+  }
+  return lo;
+}
+
+function currentCommaIndex() {
+  return commaIndexAt(realTime);
+}
+
+function seekComma(i) {
+  const idx = Math.max(0, Math.min(C.length - 2, i));
+  seek(C[idx]);
+}
+
+// 導覽鈕／Shift+方向鍵用：移動一個「大概」的秒數，最後精準吸附到最近的逗號。
+// 逗號密度在不同分割（{8} 對 {384}）差非常多，固定逗號步階換算出來的時間長度會忽大忽小；
+// 改成先訂目標秒數、換算最近逗號，才能讓每次按鍵的移動感覺一致，且落點仍然精準卡在逗號上。
+// 保底：目標秒數太小、換算後索引沒真的移動時，至少走一格，按鍵才不會看起來沒反應。
+function jumpByTime(targetSeconds) {
+  const cur = currentCommaIndex();
+  let j = commaIndexAt(realTime + targetSeconds);
+  if (targetSeconds > 0 && j <= cur) j = cur + 1;
+  if (targetSeconds < 0 && j >= cur) j = cur - 1;
+  seekComma(j);
+}
+
+// 中段導覽鈕用：跳到上一顆／下一顆實際的 note（跳過中間沒有音符的逗號、休止拍）。
+// N 依解碼順序本身就是時間遞增，往前找第一顆嚴格大於目前時間的、往後找最後一顆嚴格小於的。
+function jumpToAdjacentNote(dir) {
+  if (!N || N.length === 0) return;
+  if (dir > 0) {
+    const n = N.find(n => n.time > realTime + 1e-6);
+    seek(n ? n.time : DATA.meta.endTime);
+  } else {
+    let found = null;
+    for (let i = N.length - 1; i >= 0; i--) {
+      if (N[i].time < realTime - 1e-6) { found = N[i]; break; }
+    }
+    seek(found ? found.time : 0);
+  }
 }
 
 function syncUI() {
@@ -428,13 +483,14 @@ function syncUI() {
 
 // ---------- 播放按鈕與滑桿監聽 ----------
 // 導覽鍵：移動播放頭；若先前有點過/拖過某個端點，該端點會跟著一起走，
-// 方便「邊看邊微調」選取範圍（見 syncActiveEndpoint）
-$('b_m5').onclick = () => { jumpMeasure(-5); syncActiveEndpoint(); };
-$('b_m1').onclick = () => { jumpMeasure(-1); syncActiveEndpoint(); };
-$('b_p1').onclick = () => { jumpMeasure(+1); syncActiveEndpoint(); };
-$('b_p5').onclick = () => { jumpMeasure(+5); syncActiveEndpoint(); };
-$('b_f1').onclick = () => { seek(realTime - 0.1); syncActiveEndpoint(); };
-$('b_f2').onclick = () => { seek(realTime + 0.1); syncActiveEndpoint(); };
+// 方便「邊看邊微調」選取範圍（見 syncActiveEndpoint）。
+// 三層各管不同單位：外層＞＞＞控制秒數（吸附逗號）、中層＞＞跳到下一顆音符、內層＞精準走一個逗號。
+$('b_m5').onclick = () => { jumpByTime(-3); syncActiveEndpoint(); };
+$('b_m1').onclick = () => { jumpToAdjacentNote(-1); syncActiveEndpoint(); };
+$('b_p1').onclick = () => { jumpToAdjacentNote(+1); syncActiveEndpoint(); };
+$('b_p5').onclick = () => { jumpByTime(+3); syncActiveEndpoint(); };
+$('b_f1').onclick = () => { seekComma(currentCommaIndex() - 1); syncActiveEndpoint(); };
+$('b_f2').onclick = () => { seekComma(currentCommaIndex() + 1); syncActiveEndpoint(); };
 $('speedSlider').addEventListener('input', e => {
   speed = +e.target.value;
   $('speedVal').textContent = `${speed.toFixed(2)}×`;
@@ -494,16 +550,18 @@ function unlockAudio() {
   }
 }
 
-playBtn.onclick = () => {
+function togglePlay() {
   playing = !playing;
   if (!playing) previewStop = null;
-  playBtn.textContent = playing ? '⏸' : '▶';
+  playBtns.forEach(b => b.textContent = playing ? '⏸' : '▶');
   if (playing) {
     unlockAudio();
     lastTs = performance.now();
     requestAnimationFrame(loop);
   }
-};
+}
+playBtnL.onclick = togglePlay;
+playBtnR.onclick = togglePlay;
 
 // 碰過進度條就把方向鍵的控制權交還給播放進度（不再是選取範圍的端點）
 slider.addEventListener('pointerdown', () => { dragging = true; setActiveEndpoint(null); });
@@ -539,16 +597,16 @@ function drawDensity(playheadMi) {
     });
   });
 
-  // 選取範圍高亮（地雷灰）
-  if (typeof range !== 'undefined' && N.length > 0) {
-    const startM = measureIndex(N[range.start]?.time || 0);
-    const endM = measureIndex(N[range.end]?.time || 0);
+  // 選取範圍高亮（地雷灰）——邊界直接用逗號段時間換算，endBoundary 是「選取終點的下一個逗號」
+  if (typeof range !== 'undefined' && C.length > 1) {
+    const startM = measureIndex(C[range.start] ?? 0);
+    const endBoundaryM = measureIndex(C[range.end + 1] ?? C[C.length - 1]);
     dctx.fillStyle = rangeOverLimit ? 'rgba(242, 63, 67, 0.16)' : 'rgba(115, 115, 115, 0.25)';
-    dctx.fillRect(startM * bw, 0, (endM - startM + 1) * bw, h);
+    dctx.fillRect(startM * bw, 0, Math.max(bw, (endBoundaryM - startM) * bw), h);
     // 區間過長時兩條端點線轉紅，取代原本的文字警告
     dctx.fillStyle = rangeOverLimit ? OVER_LIMIT_COLOR : css('--mine');
     dctx.fillRect(startM * bw, 0, 2, h);
-    dctx.fillRect((endM + 1) * bw - 2, 0, 2, h);
+    dctx.fillRect(endBoundaryM * bw - 2, 0, 2, h);
   }
 
   // 播放頭
@@ -563,6 +621,27 @@ function currentComboIndex() {
   return idx === -1 ? N.length - 1 : idx;
 }
 
+// 端點框顯示用：那個逗號段實際的 simai 原文（休止拍就是空字串）。
+function commaLabel(commaIdx) {
+  const text = commaParts[commaIdx];
+  return text ? text : '（空拍）';
+}
+
+// 給人看的標籤用：選取範圍內第一顆／最後一顆音符是第幾個 combo（1-based）。
+// 逗號索引本身對人沒有意義，combo 編號才是玩家熟悉的單位；純粹拿來顯示，不影響實際裁切。
+function comboRangeSpan() {
+  if (!N || N.length === 0) return null;
+  const t0 = C[range.start] ?? 0;
+  const t1 = C[range.end + 1] ?? (DATA?.meta.endTime ?? 0);
+  const firstIdx = N.findIndex(n => n.time >= t0 - 1e-6);
+  if (firstIdx === -1 || N[firstIdx].time >= t1 - 1e-6) return null; // 這段裡沒有任何音符
+  let lastIdx = firstIdx;
+  for (let i = N.length - 1; i >= firstIdx; i--) {
+    if (N[i].time < t1 - 1e-6) { lastIdx = i; break; }
+  }
+  return { first: firstIdx + 1, last: lastIdx + 1 };
+}
+
 const MAX_RENDER_SEC = 30;
 const OVER_LIMIT_COLOR = '#f23f43';
 
@@ -574,9 +653,9 @@ let cleanCut = true;
 let rangeOverLimit = false;
 
 function getRangeDuration() {
-  if (!N || N.length === 0) return 0;
-  const startTime = N[range.start]?.time ?? 0;
-  const endTime = (N[range.end]?.time ?? DATA?.meta.endTime ?? 0) + 0.8;
+  if (!C || C.length < 2) return 0;
+  const startTime = C[range.start] ?? 0;
+  const endTime = C[range.end + 1] ?? (DATA?.meta.endTime ?? 0);
   return Math.max(0, endTime - startTime);
 }
 
@@ -585,31 +664,35 @@ function syncRange() {
   range.end = Math.max(+rA.value, +rB.value);
 
   const max = +rA.max || 1;
-  const pctStart = (range.start / max) * 100;
-  const pctEnd = (range.end / max) * 100;
-  const fill = $('rangeFill');
-  fill.style.left = `${pctStart}%`;
-  fill.style.width = `${Math.max(0, pctEnd - pctStart)}%`;
+
+  // 兩個端點框：跟著各自的滑塊走，顯示那一格逗號實際的 simai 文字
+  const tipA = $('rangeTipA'), tipB = $('rangeTipB');
+  tipA.style.left = `${(+rA.value / max) * 100}%`;
+  tipA.textContent = commaLabel(+rA.value);
+  tipB.style.left = `${(+rB.value / max) * 100}%`;
+  tipB.textContent = commaLabel(+rB.value);
 
   const dur = getRangeDuration();
-  const noteCount = range.end - range.start + 1;
+  const commaSpan = range.end - range.start + 1;
+  const combo = comboRangeSpan();
 
-  // 區間過長不用文字警告，直接把選取範圍的兩條端點線與滑桿標成紅色
-  rangeOverLimit = noteCount > 0 && dur > MAX_RENDER_SEC;
-  $('rangeTrack').classList.toggle('over-limit', rangeOverLimit);
+  // 區間過長不用文字警告，直接把兩條滑桿都標成紅色
+  rangeOverLimit = commaSpan > 0 && dur > MAX_RENDER_SEC;
+  $('rangeTrackA').classList.toggle('over-limit', rangeOverLimit);
+  $('rangeTrackB').classList.toggle('over-limit', rangeOverLimit);
 
-  let label = `Combo ${range.start} - ${range.end}`;
-  if (noteCount <= 0) {
-    label += '  ⚠️ 空區間';
-    showMessage('⚠️ 選取範圍內沒有音符，無法渲染。', 'error');
+  // 逗號索引是內部精準定位用的，對人沒有意義；顯示給人看的一律用 combo 編號
+  let label = combo ? `Combo ${combo.first} - ${combo.last}` : '（此區間沒有音符）';
+  if (commaSpan <= 0) {
+    label = '⚠️ 空區間';
+    showMessage('⚠️ 選取範圍為空區間，無法渲染。', 'error');
   } else {
     label += `  (~${dur.toFixed(1)}s)`;
     showMessage('', '');
   }
 
-  // 端點狀態標記：🔒 鎖定、◆ 作用中（導覽鍵會帶著它一起走）
-  const mark = (which, name) =>
-    rangeLocked[which] ? `🔒${name}` : (activeEndpoint === which ? `◆${name}` : '');
+  // 端點狀態標記：◆ 作用中（導覽鍵會帶著它一起走）
+  const mark = (which, name) => (activeEndpoint === which ? `◆${name}` : '');
   const marks = [mark('a', '起'), mark('b', '終')].filter(Boolean).join(' ');
   if (marks) label += `  ${marks}`;
 
@@ -618,10 +701,7 @@ function syncRange() {
   drawDensity(measureIndex(realTime));
 }
 
-// ---------- 端點拖曳：即時預覽該時間 + 雙擊鎖定 ----------
-// 鎖定後該端點不吃指標事件（見 CSS 的 .locked），避免調好之後被誤觸
-const rangeLocked = { a: false, b: false };
-
+// ---------- 端點拖曳：即時預覽該時間 ----------
 /**
  * 目前方向鍵/導覽鍵在控制哪個東西：
  *   'a' / 'b' —— 選取範圍的起點／終點（最後一次點過或拖過的那個）
@@ -636,71 +716,48 @@ function setActiveEndpoint(which) {
   slider.classList.toggle('active', which === null);
 }
 
-/** 導覽鍵移動播放頭後，把作用中的端點同步到新位置（鎖定的端點不動） */
+/** 導覽鍵移動播放頭後，把作用中的端點同步到新位置 */
 function syncActiveEndpoint() {
-  if (!activeEndpoint || rangeLocked[activeEndpoint]) return;
+  if (!activeEndpoint) return;
   const input = activeEndpoint === 'a' ? rA : rB;
-  input.value = currentComboIndex();
-  syncRange();
-}
-
-function applyRangeLocks() {
-  rA.classList.toggle('locked', rangeLocked.a);
-  rB.classList.toggle('locked', rangeLocked.b);
+  input.value = currentCommaIndex();
   syncRange();
 }
 
 /** 拖動端點時同步把播放頭移到該端點的時間，拖到哪就看到哪 */
 function onRangeInput(which) {
   const input = which === 'a' ? rA : rB;
-  if (rangeLocked[which]) {
-    // 鎖定中：還原成鎖定前的值（防鍵盤等非指標操作繞過）
-    input.value = which === 'a' ? range.start : range.end;
-    return;
-  }
   setActiveEndpoint(which);
   syncRange();
-  const t = N[+input.value]?.time;
+  const t = C[+input.value];
   if (t !== undefined) seek(t);
 }
 
 rA.addEventListener('input', () => onRangeInput('a'));
 rB.addEventListener('input', () => onRangeInput('b'));
 
-// 雙擊/雙點切換鎖定。用 pointerdown 自行判定，因為手機上的 dblclick 不可靠，
-// 而且鎖定中的端點 pointer-events 是關的，事件要由整條軌道來收。
-(() => {
-  const track = $('rangeTrack');
-  let last = { t: 0, which: null };
+// 雙擊/雙點：播放頭直接定位到該端點目前的位置。用 pointerdown 自行判定，
+// 因為手機上的 dblclick 不可靠。起點／終點各自一條獨立軌道，不用再猜「離哪個滑塊比較近」。
+function bindRangeTrackDoubleTap(trackId, which) {
+  const track = $(trackId);
+  const input = which === 'a' ? rA : rB;
+  let lastT = 0;
 
-  const nearestThumb = (clientX) => {
-    const r = track.getBoundingClientRect();
-    const val = ((clientX - r.left) / r.width) * (+rA.max || 1);
-    return Math.abs(val - +rA.value) <= Math.abs(val - +rB.value) ? 'a' : 'b';
-  };
-
-  track.addEventListener('pointerdown', (e) => {
+  track.addEventListener('pointerdown', () => {
     if (rA.disabled) return;
-    const which = nearestThumb(e.clientX);
+    // 單點也算「碰過」：之後按導覽鍵就是在調這一端
+    setActiveEndpoint(which);
     const now = performance.now();
-    if (last.which === which && now - last.t < 350) {
-      rangeLocked[which] = !rangeLocked[which];
-      applyRangeLocks();
-      showMessage(
-        rangeLocked[which]
-          ? `🔒 已鎖定${which === 'a' ? '起點' : '終點'}（再雙擊解除）`
-          : `🔓 已解除${which === 'a' ? '起點' : '終點'}鎖定`,
-        'info'
-      );
-      last = { t: 0, which: null };
+    if (now - lastT < 350) {
+      seek(C[+input.value] ?? 0);
+      lastT = 0;
       return;
     }
-    last = { t: now, which };
-
-    // 單點也算「碰過」：之後按導覽鍵就是在調這一端
-    if (!rangeLocked[which]) setActiveEndpoint(which);
+    lastT = now;
   });
-})();
+}
+bindRangeTrackDoubleTap('rangeTrackA', 'a');
+bindRangeTrackDoubleTap('rangeTrackB', 'b');
 
 // 方向鍵：控制「目前作用中的東西」——碰過端點就微調端點，碰過進度條就微調播放進度。
 // 註：刻意掛在 document 上而不是依賴 input 的 DOM 焦點——點過畫面上其他東西
@@ -708,22 +765,21 @@ rB.addEventListener('input', () => onRangeInput('b'));
 // preventDefault 同時擋掉「input 還有焦點時瀏覽器又自己加一步」造成的雙重移動。
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-  if (!DATA || playBtn.disabled) return; // 譜面還沒載入
+  if (!DATA || playBtnL.disabled) return; // 譜面還沒載入
   const dir = e.key === 'ArrowLeft' ? -1 : 1;
 
-  // 沒有作用中的端點 → 控制播放進度（← → 微調 0.1s，Shift 為 1 小節，對齊 ＜ 與 ＜＜）
+  // 沒有作用中的端點 → 控制播放進度（← → 精準微調 1 個逗號，Shift 為約 3 秒、吸附到逗號）
   if (!activeEndpoint) {
     e.preventDefault();
-    if (e.shiftKey) jumpMeasure(dir);
-    else seek(realTime + dir * 0.1);
+    if (e.shiftKey) jumpByTime(dir * 3);
+    else seekComma(currentCommaIndex() + dir);
     return;
   }
 
-  if (rangeLocked[activeEndpoint]) return;
   const input = activeEndpoint === 'a' ? rA : rB;
   if (input.disabled) return;
 
-  const step = e.shiftKey ? 10 : 1; // 按住 Shift 一次跳 10 combo
+  const step = e.shiftKey ? 10 : 1; // 按住 Shift 一次跳 10 個逗號
   const max = +input.max || 0;
   input.value = Math.max(0, Math.min(max, +input.value + dir * step));
 
@@ -732,29 +788,25 @@ document.addEventListener('keydown', (e) => {
 });
 
 $('setStart').onclick = () => {
-  if (rangeLocked.a) return showMessage('🔒 起點已鎖定，雙擊該端點可解除', 'info');
-  const cIdx = currentComboIndex();
+  const cIdx = currentCommaIndex();
   rA.value = cIdx;
-  if (!rangeLocked.b) rB.value = Math.max(range.end, cIdx);
+  rB.value = Math.max(range.end, cIdx);
   syncRange();
 };
 $('setEnd').onclick = () => {
-  if (rangeLocked.b) return showMessage('🔒 終點已鎖定，雙擊該端點可解除', 'info');
-  const cIdx = currentComboIndex();
+  const cIdx = currentCommaIndex();
   rB.value = cIdx;
-  if (!rangeLocked.a) rA.value = Math.min(range.start, cIdx);
+  rA.value = Math.min(range.start, cIdx);
   syncRange();
 };
 $('goStart').onclick = () => {
-  if (N[range.start]) seek(N[range.start].time);
+  seek(C[range.start] ?? 0);
 };
 $('previewRange').onclick = () => {
-  if (N[range.start]) {
-    seek(N[range.start].time);
-    // 預覽的停點跟實際輸出一致（切的乾淨＝停在結束點，不多播）
-    previewStop = (N[range.end]?.time || DATA.meta.endTime) + 0.8;
-    if (!playing) playBtn.click();
-  }
+  seek(C[range.start] ?? 0);
+  // 預覽的停點跟實際輸出一致（切的乾淨＝停在下一個逗號的邊界，不多播）
+  previewStop = C[range.end + 1] ?? DATA.meta.endTime;
+  if (!playing) togglePlay();
 };
 
 // ---------- 流速 (ハイスピ) 控制 ----------
@@ -817,19 +869,59 @@ $('cleanCutBtn').addEventListener('click', () => {
 })();
 
 // ---------- GIF 渲染並傳送 ----------
-$('exportGifBtn').onclick = async () => {
-  // 前端防護：空區間檢查
-  const noteCount = range.end - range.start + 1;
-  if (noteCount <= 0) {
-    showMessage('⚠️ 選取範圍內沒有音符，請重新選取。', 'error');
+// 按「傳送」先跳確認彈窗，顯示這次實際會送出去的 simai 內容，看過沒問題再真的送出。
+$('exportGifBtn').onclick = () => {
+  const commaSpan = range.end - range.start + 1;
+  if (commaSpan <= 0) {
+    showMessage('⚠️ 選取範圍為空區間，請重新選取。', 'error');
     return;
   }
+  openConfirmModal();
+};
 
+/** 組出彈窗內容：cleanCut 開啟時秀出實際切出來的片段（跟送出去的一字不差），關閉時說明會怎麼處理 */
+function openConfirmModal() {
+  const dur = getRangeDuration();
+  let previewText = null;
+  if (cleanCut) {
+    try {
+      const info = { indexToTime: C, tags: DATA.tags || [], bpm: DATA.meta.bpm };
+      previewText = buildCleanCutSimai(chartText, info, C[range.start] ?? 0, C[range.end + 1] ?? DATA.meta.endTime);
+    } catch (e) {
+      console.error('產生預覽片段失敗:', e);
+    }
+  }
+
+  $('confirmMeta').textContent = cleanCut
+    ? `切的乾淨・約 ${dur.toFixed(1)} 秒・以下是實際會送出的內容`
+    : `未啟用切的乾淨・約 ${dur.toFixed(1)} 秒・會送出整份原始譜面＋指定時間範圍`;
+  $('confirmSimaiText').textContent = previewText ?? '（整份原始譜面，內容過長不在此顯示；後端會照時間範圍只播放這一段）';
+  $('confirmModal').hidden = false;
+}
+
+function closeConfirmModal() {
+  $('confirmModal').hidden = true;
+}
+
+$('confirmCancelBtn').onclick = closeConfirmModal;
+$('confirmModal').addEventListener('click', (e) => {
+  if (e.target.id === 'confirmModal') closeConfirmModal(); // 點背景（非內容框）等同取消
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('confirmModal').hidden) closeConfirmModal();
+});
+
+$('confirmSendBtn').onclick = () => {
+  closeConfirmModal();
+  doExport();
+};
+
+async function doExport() {
   setInputsDisabled(true);
   showMessage('🎬 正在向 Bot 發送渲染請求，請稍候…', 'info');
 
-  const startCombo = range.start;
-  const endCombo = range.end;
+  const startComma = range.start;
+  const endComma = range.end;
   const dur = getRangeDuration();
 
   try {
@@ -841,8 +933,8 @@ $('exportGifBtn').onclick = async () => {
         userId: auth.user.id,
         username: auth.user.global_name ?? auth.user.username,
         simai: chartText,
-        startCombo: startCombo,
-        endCombo: endCombo,
+        startComma,
+        endComma,
         chartName: songTitleEl.textContent,
         cleanCut,
       }),
@@ -867,7 +959,7 @@ $('exportGifBtn').onclick = async () => {
   }
   // 只有失敗的情況才重新啟用 UI
   setInputsDisabled(false);
-};
+}
 
 // ---------- 繪製邏輯 ----------
 
@@ -914,20 +1006,6 @@ function draw(t, dt = 0) {
     ctx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
   }
 
-  // 3.5 將選取範圍的端點音符暫時改為地雷屬性（使其渲染為灰色）
-  const startNote = N[range.start];
-  const endNote = N[range.end];
-  let origStartMine = false;
-  if (startNote) {
-    origStartMine = startNote.isMine;
-    startNote.isMine = true;
-  }
-  let origEndMine = false;
-  if (endNote && endNote !== startNote) {
-    origEndMine = endNote.isMine;
-    endNote.isMine = true;
-  }
-
   // 4. 繪製核心影格 (使用相同的變形矩陣)
   renderer.drawFrame({
     globalTime: t,
@@ -943,13 +1021,6 @@ function draw(t, dt = 0) {
     playScoreRes,
   });
 
-  // 4.5 還原原本的地雷屬性
-  if (startNote) {
-    startNote.isMine = origStartMine;
-  }
-  if (endNote && endNote !== startNote) {
-    endNote.isMine = origEndMine;
-  }
 }
 
 // ---------- 播放 Loop 迴圈 ----------
@@ -962,12 +1033,12 @@ function loop(ts) {
     realTime = previewStop;
     playing = false;
     previewStop = null;
-    playBtn.textContent = '▶';
+    playBtns.forEach(b => b.textContent = '▶');
   }
   if (realTime >= DATA.meta.endTime) {
     realTime = DATA.meta.endTime;
     playing = false;
-    playBtn.textContent = '▶';
+    playBtns.forEach(b => b.textContent = '▶');
   }
   syncUI();
   draw(realTime, dt);
@@ -980,7 +1051,7 @@ function setInputsDisabled(disabled) {
   $('b_m5').disabled = disabled;
   $('b_m1').disabled = disabled;
   $('b_f1').disabled = disabled;
-  playBtn.disabled = disabled;
+  playBtns.forEach(b => b.disabled = disabled);
   $('b_f2').disabled = disabled;
   $('b_p1').disabled = disabled;
   $('b_p5').disabled = disabled;

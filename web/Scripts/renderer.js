@@ -119,8 +119,10 @@ export class SimaiRenderer {
         this._auxTextList = new Array(12);
 
         // outlineText / middleDisplay 快取配置
-        this._middleDisplayConfig1 = { fillStyle: "#A1435D", strokeStyle: "#A6ABAE" };
-        this._middleDisplayConfig2 = { fillStyle: "#A1435D", strokeStyle: "#A6ABAE", letterSpacing: -0.1 };
+        // COMBO 字樣原本是暗紅棕色（#A1435D），在黑底 GIF 上幾乎看不出顏色、像灰色，
+        // 改用跟 tap 音符同色系的亮粉色，辨識度好很多。
+        this._middleDisplayConfig1 = { fillStyle: "#ff4fa5", strokeStyle: "#A6ABAE" };
+        this._middleDisplayConfig2 = { fillStyle: "#ff4fa5", strokeStyle: "#A6ABAE", letterSpacing: -0.1 };
         this._middleDisplayConfigScore = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.1, textAlign: "right" };
         this._middleDisplayConfigDot = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.12, textAlign: "left" };
         this._middleDisplayConfigFrac = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.12, textAlign: "left" };

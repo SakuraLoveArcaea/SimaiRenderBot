@@ -11509,8 +11509,8 @@ var SimaiRenderer = class {
     this.hanabiEffect = {};
     this._tempColorConfig = { colorCode: "" };
     this._auxTextList = new Array(12);
-    this._middleDisplayConfig1 = { fillStyle: "#A1435D", strokeStyle: "#A6ABAE" };
-    this._middleDisplayConfig2 = { fillStyle: "#A1435D", strokeStyle: "#A6ABAE", letterSpacing: -0.1 };
+    this._middleDisplayConfig1 = { fillStyle: "#ff4fa5", strokeStyle: "#A6ABAE" };
+    this._middleDisplayConfig2 = { fillStyle: "#ff4fa5", strokeStyle: "#A6ABAE", letterSpacing: -0.1 };
     this._middleDisplayConfigScore = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.1, textAlign: "right" };
     this._middleDisplayConfigDot = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.12, textAlign: "left" };
     this._middleDisplayConfigFrac = { fillStyle: "#4061A8", strokeStyle: "#A6ABAE", letterSpacing: -0.12, textAlign: "left" };
@@ -12312,6 +12312,54 @@ var SimaiRenderer = class {
   }
 };
 
+// web/Scripts/simaiCut.js
+function splitCommaParts(simaiText) {
+  return simaiText.replace(/\|\|.*$/gm, "").replace(/\s+/g, "").split(",");
+}
+function sliceSource(simaiText, indexToTime, start, end) {
+  const parts = splitCommaParts(simaiText);
+  let i0 = 0;
+  let i1 = parts.length - 1;
+  for (let i = 0; i < parts.length; i++) {
+    const segStart = indexToTime[i] ?? 0;
+    const segEnd = indexToTime[i + 1] ?? segStart;
+    if (segEnd <= start) i0 = Math.min(i + 1, parts.length - 1);
+    if (segStart < end) i1 = i;
+  }
+  return parts.slice(i0, i1 + 1).join(",");
+}
+function analyzeHeader(simaiText) {
+  let s = (simaiText ?? "").replace(/\|\|.*$/gm, "").replace(/\s+/g, "");
+  let hasBpm = false, hasSplit = false, m;
+  while ((m = s.match(/^\([^()]*\)/)) || (m = s.match(/^\{[^{}]*\}/))) {
+    if (m[0][0] === "(") hasBpm = true;
+    else hasSplit = true;
+    s = s.slice(m[0].length);
+  }
+  return { hasBpm, hasSplit };
+}
+function buildCleanCutSimai(simaiText, info, start, end) {
+  const body = sliceSource(simaiText, info.indexToTime ?? [], start, end);
+  const valueAt = (type) => {
+    let v = null;
+    for (const t of info.tags ?? []) {
+      if (t.type === type && t.time <= start + 1e-6) v = t.value;
+    }
+    return v;
+  };
+  const { hasBpm, hasSplit } = analyzeHeader(body);
+  let header = "";
+  if (!hasBpm) {
+    const bpm = valueAt("bpm") ?? info.bpm;
+    if (bpm) header += `(${bpm})`;
+  }
+  if (!hasSplit) {
+    const split = valueAt("split");
+    if (split) header += `{${split}}`;
+  }
+  return header + body;
+}
+
 // activity/main.js
 function logRemote(event, data) {
   try {
@@ -12344,7 +12392,9 @@ var ctx = cv.getContext("2d");
 var dv = $("densityCanvas");
 var dctx = dv.getContext("2d");
 var slider = $("measureSlider");
-var playBtn = $("playBtn");
+var playBtnL = $("playBtnL");
+var playBtnR = $("playBtnR");
+var playBtns = [playBtnL, playBtnR];
 var rA = $("rangeA");
 var rB = $("rangeB");
 var params = new URLSearchParams(window.location.search);
@@ -12369,6 +12419,8 @@ var auth = null;
 var M = [];
 var N = [];
 var D = [];
+var C = [];
+var commaParts = [];
 var DATA = null;
 var chartText = "";
 var playing = false;
@@ -12494,7 +12546,8 @@ function processChartData(decoded) {
     measures: M_arr,
     density: D_arr,
     notes: decoded.notes,
-    tags: decoded.tags
+    tags: decoded.tags,
+    indexToTime: decoded.indexToTime || []
   };
 }
 async function setup() {
@@ -12569,6 +12622,8 @@ async function setup() {
   M = DATA.measures;
   N = DATA.notes;
   D = DATA.density;
+  C = DATA.indexToTime;
+  commaParts = splitCommaParts(chartText);
   renderer = new SimaiRenderer(cv, defaultSettings);
   renderer.setImages(images);
   renderer.setContext(ctx);
@@ -12579,36 +12634,36 @@ async function setup() {
   const c = DATA.meta.counts;
   metaLineEl.textContent = `TAP ${c.tap} \xB7 HOLD ${c.hold} \xB7 SLIDE ${c.slide} \xB7 TOUCH ${c.touch} \xB7 BREAK ${c.break} \u2014 ALL ${DATA.meta.total}`;
   slider.max = M.length - 1;
-  const maxCombo = N.length - 1;
-  rA.max = rB.max = maxCombo;
+  const maxComma = C.length - 2;
+  rA.max = rB.max = maxComma;
   rA.value = 0;
-  rB.value = maxCombo;
+  rB.value = maxComma;
   range.start = 0;
-  range.end = maxCombo;
+  range.end = maxComma;
   setInputsDisabled(false);
   statusEl.textContent = `\u9023\u7DDA\u6210\u529F\uFF1A${auth.user.global_name ?? auth.user.username}`;
   statusEl.className = "status status-ready";
   resizeCanvas();
   setActiveEndpoint(null);
-  const resumed = await restoreResumeSession(maxCombo);
+  const resumed = await restoreResumeSession(maxComma);
   if (!resumed) {
     rA.value = 0;
-    rB.value = maxCombo;
+    rB.value = maxComma;
     range.start = 0;
-    range.end = maxCombo;
+    range.end = maxComma;
   }
   syncRange();
-  seek(resumed ? N[range.start]?.time ?? 0 : 0);
+  seek(resumed ? C[range.start] ?? 0 : 0);
   logRemote("setup:complete", resumed ? { resumed: [range.start, range.end] } : void 0);
 }
-async function restoreResumeSession(maxCombo) {
+async function restoreResumeSession(maxComma) {
   try {
     const res = await fetch(`/.proxy/api/resume?userId=${encodeURIComponent(auth.user.id)}`);
     if (!res.ok) return false;
     const s = await res.json();
-    if (typeof s.startCombo !== "number" || typeof s.endCombo !== "number") return false;
-    const start = Math.max(0, Math.min(s.startCombo, maxCombo));
-    const end = Math.max(start, Math.min(s.endCombo, maxCombo));
+    if (typeof s.startComma !== "number" || typeof s.endComma !== "number") return false;
+    const start = Math.max(0, Math.min(s.startComma, maxComma));
+    const end = Math.max(start, Math.min(s.endComma, maxComma));
     rA.value = start;
     rB.value = end;
     range.start = start;
@@ -12635,8 +12690,43 @@ function seek(t) {
   syncUI();
   draw(realTime);
 }
-function jumpMeasure(d) {
-  seek(M[Math.max(0, Math.min(M.length - 1, measureIndex(realTime) + d))]);
+function commaIndexAt(t) {
+  let lo = 0, hi = C.length - 2;
+  while (lo < hi) {
+    const mid = lo + hi + 1 >> 1;
+    C[mid] <= t + 1e-6 ? lo = mid : hi = mid - 1;
+  }
+  return lo;
+}
+function currentCommaIndex() {
+  return commaIndexAt(realTime);
+}
+function seekComma(i) {
+  const idx = Math.max(0, Math.min(C.length - 2, i));
+  seek(C[idx]);
+}
+function jumpByTime(targetSeconds) {
+  const cur = currentCommaIndex();
+  let j = commaIndexAt(realTime + targetSeconds);
+  if (targetSeconds > 0 && j <= cur) j = cur + 1;
+  if (targetSeconds < 0 && j >= cur) j = cur - 1;
+  seekComma(j);
+}
+function jumpToAdjacentNote(dir) {
+  if (!N || N.length === 0) return;
+  if (dir > 0) {
+    const n = N.find((n2) => n2.time > realTime + 1e-6);
+    seek(n ? n.time : DATA.meta.endTime);
+  } else {
+    let found = null;
+    for (let i = N.length - 1; i >= 0; i--) {
+      if (N[i].time < realTime - 1e-6) {
+        found = N[i];
+        break;
+      }
+    }
+    seek(found ? found.time : 0);
+  }
 }
 function syncUI() {
   const mi = measureIndex(realTime);
@@ -12646,27 +12736,27 @@ function syncUI() {
   drawDensity(mi);
 }
 $("b_m5").onclick = () => {
-  jumpMeasure(-5);
+  jumpByTime(-3);
   syncActiveEndpoint();
 };
 $("b_m1").onclick = () => {
-  jumpMeasure(-1);
+  jumpToAdjacentNote(-1);
   syncActiveEndpoint();
 };
 $("b_p1").onclick = () => {
-  jumpMeasure(1);
+  jumpToAdjacentNote(1);
   syncActiveEndpoint();
 };
 $("b_p5").onclick = () => {
-  jumpMeasure(5);
+  jumpByTime(3);
   syncActiveEndpoint();
 };
 $("b_f1").onclick = () => {
-  seek(realTime - 0.1);
+  seekComma(currentCommaIndex() - 1);
   syncActiveEndpoint();
 };
 $("b_f2").onclick = () => {
-  seek(realTime + 0.1);
+  seekComma(currentCommaIndex() + 1);
   syncActiveEndpoint();
 };
 $("speedSlider").addEventListener("input", (e) => {
@@ -12717,16 +12807,18 @@ function unlockAudio() {
     });
   }
 }
-playBtn.onclick = () => {
+function togglePlay() {
   playing = !playing;
   if (!playing) previewStop = null;
-  playBtn.textContent = playing ? "\u23F8" : "\u25B6";
+  playBtns.forEach((b) => b.textContent = playing ? "\u23F8" : "\u25B6");
   if (playing) {
     unlockAudio();
     lastTs = performance.now();
     requestAnimationFrame(loop);
   }
-};
+}
+playBtnL.onclick = togglePlay;
+playBtnR.onclick = togglePlay;
 slider.addEventListener("pointerdown", () => {
   dragging = true;
   setActiveEndpoint(null);
@@ -12769,14 +12861,14 @@ function drawDensity(playheadMi) {
       dctx.fillRect(i * bw + 0.5, y, Math.max(1, bw - 1), bh);
     });
   });
-  if (typeof range !== "undefined" && N.length > 0) {
-    const startM = measureIndex(N[range.start]?.time || 0);
-    const endM = measureIndex(N[range.end]?.time || 0);
+  if (typeof range !== "undefined" && C.length > 1) {
+    const startM = measureIndex(C[range.start] ?? 0);
+    const endBoundaryM = measureIndex(C[range.end + 1] ?? C[C.length - 1]);
     dctx.fillStyle = rangeOverLimit ? "rgba(242, 63, 67, 0.16)" : "rgba(115, 115, 115, 0.25)";
-    dctx.fillRect(startM * bw, 0, (endM - startM + 1) * bw, h);
+    dctx.fillRect(startM * bw, 0, Math.max(bw, (endBoundaryM - startM) * bw), h);
     dctx.fillStyle = rangeOverLimit ? OVER_LIMIT_COLOR : css("--mine");
     dctx.fillRect(startM * bw, 0, 2, h);
-    dctx.fillRect((endM + 1) * bw - 2, 0, 2, h);
+    dctx.fillRect(endBoundaryM * bw - 2, 0, 2, h);
   }
   dctx.fillStyle = "#ffffff";
   dctx.fillRect(playheadMi * bw, 0, Math.max(2, bw * 0.6), h);
@@ -12786,45 +12878,65 @@ function currentComboIndex() {
   const idx = N.findIndex((n) => n.time >= realTime);
   return idx === -1 ? N.length - 1 : idx;
 }
+function commaLabel(commaIdx) {
+  const text = commaParts[commaIdx];
+  return text ? text : "\uFF08\u7A7A\u62CD\uFF09";
+}
+function comboRangeSpan() {
+  if (!N || N.length === 0) return null;
+  const t0 = C[range.start] ?? 0;
+  const t1 = C[range.end + 1] ?? (DATA?.meta.endTime ?? 0);
+  const firstIdx = N.findIndex((n) => n.time >= t0 - 1e-6);
+  if (firstIdx === -1 || N[firstIdx].time >= t1 - 1e-6) return null;
+  let lastIdx = firstIdx;
+  for (let i = N.length - 1; i >= firstIdx; i--) {
+    if (N[i].time < t1 - 1e-6) {
+      lastIdx = i;
+      break;
+    }
+  }
+  return { first: firstIdx + 1, last: lastIdx + 1 };
+}
 var MAX_RENDER_SEC = 30;
 var OVER_LIMIT_COLOR = "#f23f43";
 var cleanCut = true;
 var rangeOverLimit = false;
 function getRangeDuration() {
-  if (!N || N.length === 0) return 0;
-  const startTime = N[range.start]?.time ?? 0;
-  const endTime = (N[range.end]?.time ?? DATA?.meta.endTime ?? 0) + 0.8;
+  if (!C || C.length < 2) return 0;
+  const startTime = C[range.start] ?? 0;
+  const endTime = C[range.end + 1] ?? (DATA?.meta.endTime ?? 0);
   return Math.max(0, endTime - startTime);
 }
 function syncRange() {
   range.start = Math.min(+rA.value, +rB.value);
   range.end = Math.max(+rA.value, +rB.value);
   const max = +rA.max || 1;
-  const pctStart = range.start / max * 100;
-  const pctEnd = range.end / max * 100;
-  const fill = $("rangeFill");
-  fill.style.left = `${pctStart}%`;
-  fill.style.width = `${Math.max(0, pctEnd - pctStart)}%`;
+  const tipA = $("rangeTipA"), tipB = $("rangeTipB");
+  tipA.style.left = `${+rA.value / max * 100}%`;
+  tipA.textContent = commaLabel(+rA.value);
+  tipB.style.left = `${+rB.value / max * 100}%`;
+  tipB.textContent = commaLabel(+rB.value);
   const dur = getRangeDuration();
-  const noteCount = range.end - range.start + 1;
-  rangeOverLimit = noteCount > 0 && dur > MAX_RENDER_SEC;
-  $("rangeTrack").classList.toggle("over-limit", rangeOverLimit);
-  let label = `Combo ${range.start} - ${range.end}`;
-  if (noteCount <= 0) {
-    label += "  \u26A0\uFE0F \u7A7A\u5340\u9593";
-    showMessage("\u26A0\uFE0F \u9078\u53D6\u7BC4\u570D\u5167\u6C92\u6709\u97F3\u7B26\uFF0C\u7121\u6CD5\u6E32\u67D3\u3002", "error");
+  const commaSpan = range.end - range.start + 1;
+  const combo = comboRangeSpan();
+  rangeOverLimit = commaSpan > 0 && dur > MAX_RENDER_SEC;
+  $("rangeTrackA").classList.toggle("over-limit", rangeOverLimit);
+  $("rangeTrackB").classList.toggle("over-limit", rangeOverLimit);
+  let label = combo ? `Combo ${combo.first} - ${combo.last}` : "\uFF08\u6B64\u5340\u9593\u6C92\u6709\u97F3\u7B26\uFF09";
+  if (commaSpan <= 0) {
+    label = "\u26A0\uFE0F \u7A7A\u5340\u9593";
+    showMessage("\u26A0\uFE0F \u9078\u53D6\u7BC4\u570D\u70BA\u7A7A\u5340\u9593\uFF0C\u7121\u6CD5\u6E32\u67D3\u3002", "error");
   } else {
     label += `  (~${dur.toFixed(1)}s)`;
     showMessage("", "");
   }
-  const mark = (which, name) => rangeLocked[which] ? `\u{1F512}${name}` : activeEndpoint === which ? `\u25C6${name}` : "";
+  const mark = (which, name) => activeEndpoint === which ? `\u25C6${name}` : "";
   const marks = [mark("a", "\u8D77"), mark("b", "\u7D42")].filter(Boolean).join(" ");
   if (marks) label += `  ${marks}`;
   $("rangeLabel").textContent = label;
   $("rangeLabel").classList.toggle("over-limit", rangeOverLimit);
   drawDensity(measureIndex(realTime));
 }
-var rangeLocked = { a: false, b: false };
 var activeEndpoint = null;
 function setActiveEndpoint(which) {
   activeEndpoint = which;
@@ -12833,66 +12945,48 @@ function setActiveEndpoint(which) {
   slider.classList.toggle("active", which === null);
 }
 function syncActiveEndpoint() {
-  if (!activeEndpoint || rangeLocked[activeEndpoint]) return;
+  if (!activeEndpoint) return;
   const input = activeEndpoint === "a" ? rA : rB;
-  input.value = currentComboIndex();
-  syncRange();
-}
-function applyRangeLocks() {
-  rA.classList.toggle("locked", rangeLocked.a);
-  rB.classList.toggle("locked", rangeLocked.b);
+  input.value = currentCommaIndex();
   syncRange();
 }
 function onRangeInput(which) {
   const input = which === "a" ? rA : rB;
-  if (rangeLocked[which]) {
-    input.value = which === "a" ? range.start : range.end;
-    return;
-  }
   setActiveEndpoint(which);
   syncRange();
-  const t = N[+input.value]?.time;
+  const t = C[+input.value];
   if (t !== void 0) seek(t);
 }
 rA.addEventListener("input", () => onRangeInput("a"));
 rB.addEventListener("input", () => onRangeInput("b"));
-(() => {
-  const track = $("rangeTrack");
-  let last = { t: 0, which: null };
-  const nearestThumb = (clientX) => {
-    const r = track.getBoundingClientRect();
-    const val = (clientX - r.left) / r.width * (+rA.max || 1);
-    return Math.abs(val - +rA.value) <= Math.abs(val - +rB.value) ? "a" : "b";
-  };
-  track.addEventListener("pointerdown", (e) => {
+function bindRangeTrackDoubleTap(trackId, which) {
+  const track = $(trackId);
+  const input = which === "a" ? rA : rB;
+  let lastT = 0;
+  track.addEventListener("pointerdown", () => {
     if (rA.disabled) return;
-    const which = nearestThumb(e.clientX);
+    setActiveEndpoint(which);
     const now = performance.now();
-    if (last.which === which && now - last.t < 350) {
-      rangeLocked[which] = !rangeLocked[which];
-      applyRangeLocks();
-      showMessage(
-        rangeLocked[which] ? `\u{1F512} \u5DF2\u9396\u5B9A${which === "a" ? "\u8D77\u9EDE" : "\u7D42\u9EDE"}\uFF08\u518D\u96D9\u64CA\u89E3\u9664\uFF09` : `\u{1F513} \u5DF2\u89E3\u9664${which === "a" ? "\u8D77\u9EDE" : "\u7D42\u9EDE"}\u9396\u5B9A`,
-        "info"
-      );
-      last = { t: 0, which: null };
+    if (now - lastT < 350) {
+      seek(C[+input.value] ?? 0);
+      lastT = 0;
       return;
     }
-    last = { t: now, which };
-    if (!rangeLocked[which]) setActiveEndpoint(which);
+    lastT = now;
   });
-})();
+}
+bindRangeTrackDoubleTap("rangeTrackA", "a");
+bindRangeTrackDoubleTap("rangeTrackB", "b");
 document.addEventListener("keydown", (e) => {
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-  if (!DATA || playBtn.disabled) return;
+  if (!DATA || playBtnL.disabled) return;
   const dir = e.key === "ArrowLeft" ? -1 : 1;
   if (!activeEndpoint) {
     e.preventDefault();
-    if (e.shiftKey) jumpMeasure(dir);
-    else seek(realTime + dir * 0.1);
+    if (e.shiftKey) jumpByTime(dir * 3);
+    else seekComma(currentCommaIndex() + dir);
     return;
   }
-  if (rangeLocked[activeEndpoint]) return;
   const input = activeEndpoint === "a" ? rA : rB;
   if (input.disabled) return;
   const step = e.shiftKey ? 10 : 1;
@@ -12902,28 +12996,24 @@ document.addEventListener("keydown", (e) => {
   onRangeInput(activeEndpoint);
 });
 $("setStart").onclick = () => {
-  if (rangeLocked.a) return showMessage("\u{1F512} \u8D77\u9EDE\u5DF2\u9396\u5B9A\uFF0C\u96D9\u64CA\u8A72\u7AEF\u9EDE\u53EF\u89E3\u9664", "info");
-  const cIdx = currentComboIndex();
+  const cIdx = currentCommaIndex();
   rA.value = cIdx;
-  if (!rangeLocked.b) rB.value = Math.max(range.end, cIdx);
+  rB.value = Math.max(range.end, cIdx);
   syncRange();
 };
 $("setEnd").onclick = () => {
-  if (rangeLocked.b) return showMessage("\u{1F512} \u7D42\u9EDE\u5DF2\u9396\u5B9A\uFF0C\u96D9\u64CA\u8A72\u7AEF\u9EDE\u53EF\u89E3\u9664", "info");
-  const cIdx = currentComboIndex();
+  const cIdx = currentCommaIndex();
   rB.value = cIdx;
-  if (!rangeLocked.a) rA.value = Math.min(range.start, cIdx);
+  rA.value = Math.min(range.start, cIdx);
   syncRange();
 };
 $("goStart").onclick = () => {
-  if (N[range.start]) seek(N[range.start].time);
+  seek(C[range.start] ?? 0);
 };
 $("previewRange").onclick = () => {
-  if (N[range.start]) {
-    seek(N[range.start].time);
-    previewStop = (N[range.end]?.time || DATA.meta.endTime) + 0.8;
-    if (!playing) playBtn.click();
-  }
+  seek(C[range.start] ?? 0);
+  previewStop = C[range.end + 1] ?? DATA.meta.endTime;
+  if (!playing) togglePlay();
 };
 $("hsSlider").addEventListener("input", (e) => {
   const newHs = +e.target.value;
@@ -12973,16 +13063,48 @@ $("cleanCutBtn").addEventListener("click", () => {
     if (e.key === "Escape") close();
   });
 })();
-$("exportGifBtn").onclick = async () => {
-  const noteCount = range.end - range.start + 1;
-  if (noteCount <= 0) {
-    showMessage("\u26A0\uFE0F \u9078\u53D6\u7BC4\u570D\u5167\u6C92\u6709\u97F3\u7B26\uFF0C\u8ACB\u91CD\u65B0\u9078\u53D6\u3002", "error");
+$("exportGifBtn").onclick = () => {
+  const commaSpan = range.end - range.start + 1;
+  if (commaSpan <= 0) {
+    showMessage("\u26A0\uFE0F \u9078\u53D6\u7BC4\u570D\u70BA\u7A7A\u5340\u9593\uFF0C\u8ACB\u91CD\u65B0\u9078\u53D6\u3002", "error");
     return;
   }
+  openConfirmModal();
+};
+function openConfirmModal() {
+  const dur = getRangeDuration();
+  let previewText = null;
+  if (cleanCut) {
+    try {
+      const info = { indexToTime: C, tags: DATA.tags || [], bpm: DATA.meta.bpm };
+      previewText = buildCleanCutSimai(chartText, info, C[range.start] ?? 0, C[range.end + 1] ?? DATA.meta.endTime);
+    } catch (e) {
+      console.error("\u7522\u751F\u9810\u89BD\u7247\u6BB5\u5931\u6557:", e);
+    }
+  }
+  $("confirmMeta").textContent = cleanCut ? `\u5207\u7684\u4E7E\u6DE8\u30FB\u7D04 ${dur.toFixed(1)} \u79D2\u30FB\u4EE5\u4E0B\u662F\u5BE6\u969B\u6703\u9001\u51FA\u7684\u5167\u5BB9` : `\u672A\u555F\u7528\u5207\u7684\u4E7E\u6DE8\u30FB\u7D04 ${dur.toFixed(1)} \u79D2\u30FB\u6703\u9001\u51FA\u6574\u4EFD\u539F\u59CB\u8B5C\u9762\uFF0B\u6307\u5B9A\u6642\u9593\u7BC4\u570D`;
+  $("confirmSimaiText").textContent = previewText ?? "\uFF08\u6574\u4EFD\u539F\u59CB\u8B5C\u9762\uFF0C\u5167\u5BB9\u904E\u9577\u4E0D\u5728\u6B64\u986F\u793A\uFF1B\u5F8C\u7AEF\u6703\u7167\u6642\u9593\u7BC4\u570D\u53EA\u64AD\u653E\u9019\u4E00\u6BB5\uFF09";
+  $("confirmModal").hidden = false;
+}
+function closeConfirmModal() {
+  $("confirmModal").hidden = true;
+}
+$("confirmCancelBtn").onclick = closeConfirmModal;
+$("confirmModal").addEventListener("click", (e) => {
+  if (e.target.id === "confirmModal") closeConfirmModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("confirmModal").hidden) closeConfirmModal();
+});
+$("confirmSendBtn").onclick = () => {
+  closeConfirmModal();
+  doExport();
+};
+async function doExport() {
   setInputsDisabled(true);
   showMessage("\u{1F3AC} \u6B63\u5728\u5411 Bot \u767C\u9001\u6E32\u67D3\u8ACB\u6C42\uFF0C\u8ACB\u7A0D\u5019\u2026", "info");
-  const startCombo = range.start;
-  const endCombo = range.end;
+  const startComma = range.start;
+  const endComma = range.end;
   const dur = getRangeDuration();
   try {
     const res = await fetch("/.proxy/api/render", {
@@ -12993,8 +13115,8 @@ $("exportGifBtn").onclick = async () => {
         userId: auth.user.id,
         username: auth.user.global_name ?? auth.user.username,
         simai: chartText,
-        startCombo,
-        endCombo,
+        startComma,
+        endComma,
         chartName: songTitleEl.textContent,
         cleanCut
       })
@@ -13015,7 +13137,7 @@ $("exportGifBtn").onclick = async () => {
     showMessage(`\u274C \u7DB2\u8DEF\u932F\u8AA4\uFF0C\u7121\u6CD5\u50B3\u9001\u8ACB\u6C42\uFF1A${e.message}`, "error");
   }
   setInputsDisabled(false);
-};
+}
 function draw(t, dt = 0) {
   if (!renderer || !logic || !DATA) return;
   const {
@@ -13054,18 +13176,6 @@ function draw(t, dt = 0) {
   if (outlineImage) {
     ctx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
   }
-  const startNote = N[range.start];
-  const endNote = N[range.end];
-  let origStartMine = false;
-  if (startNote) {
-    origStartMine = startNote.isMine;
-    startNote.isMine = true;
-  }
-  let origEndMine = false;
-  if (endNote && endNote !== startNote) {
-    origEndMine = endNote.isMine;
-    endNote.isMine = true;
-  }
   renderer.drawFrame({
     globalTime: t,
     buckets,
@@ -13079,12 +13189,6 @@ function draw(t, dt = 0) {
     noteQuantity,
     playScoreRes
   });
-  if (startNote) {
-    startNote.isMine = origStartMine;
-  }
-  if (endNote && endNote !== startNote) {
-    endNote.isMine = origEndMine;
-  }
 }
 function loop(ts) {
   if (!playing) return;
@@ -13095,12 +13199,12 @@ function loop(ts) {
     realTime = previewStop;
     playing = false;
     previewStop = null;
-    playBtn.textContent = "\u25B6";
+    playBtns.forEach((b) => b.textContent = "\u25B6");
   }
   if (realTime >= DATA.meta.endTime) {
     realTime = DATA.meta.endTime;
     playing = false;
-    playBtn.textContent = "\u25B6";
+    playBtns.forEach((b) => b.textContent = "\u25B6");
   }
   syncUI();
   draw(realTime, dt);
@@ -13111,7 +13215,7 @@ function setInputsDisabled(disabled) {
   $("b_m5").disabled = disabled;
   $("b_m1").disabled = disabled;
   $("b_f1").disabled = disabled;
-  playBtn.disabled = disabled;
+  playBtns.forEach((b) => b.disabled = disabled);
   $("b_f2").disabled = disabled;
   $("b_p1").disabled = disabled;
   $("b_p5").disabled = disabled;

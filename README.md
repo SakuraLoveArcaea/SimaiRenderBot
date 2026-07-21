@@ -264,27 +264,30 @@ stateDiagram-v2
    | (7) 執行 processChartData() 前處理並計算 measures 與 density
    | (8) 啟動 60fps 的 requestAnimationFrame 畫布渲染循環，繪製 Canvas 軌道與 Note
    |
-   | --- [使用者在介面上拉動範圍，決定要渲染的 GIF 區間 (例如 Combo 100 - 250)] ---
+   | --- [使用者在介面上拖動兩條獨立的滑桿，決定要渲染的區間 (例如 Combo 100 - 250)] ---
    |
    | (9) 點擊「✅ 傳送此區間」
-   |     --> 顯示請求成功提示，800ms 後調用 discordSdk.close() 關閉網頁回到 Discord
+   |     --> 先跳確認彈窗：cleanCut 開啟時，用跟後端相同的 buildCleanCutSimai() 在前端
+   |         現算一次片段，把「等一下真的會送出去」的 simai 內容原字顯示出來給使用者看過
+   |     --> 按「確認送出」才顯示請求成功提示，800ms 後 discordSdk.close() 關閉網頁回到 Discord
    |     --> 同時 POST /.proxy/api/render
-   |         { simai, startCombo, endCombo, chartName, cleanCut, channelId, userId }
+   |         { simai, startComma, endComma, chartName, cleanCut, channelId, userId }
    v
 [src/activity-server.js] (後端)
-   | (10) 收到請求，調用 service.comboInfo(simai) 解析完整譜面時間軸，換算出 start/end 實際秒數
+   | (10) 收到請求，調用 service.comboInfo(simai) 拿到 indexToTime（逗號段時間軸），
+   |      直接查表換算 start/end 實際秒數——選第幾個逗號就是切第幾個逗號，不用近似猜測
    | (11) 依區間時長與音符數估計渲染時間，在頻道中發送「🎬 正在渲染，預估 N 秒...」提示訊息
    | (12) 立即向前端返回 200 OK（以讓前端立即關閉視窗），並在背景（Background）異步啟動渲染：
-   |      · cleanCut=true（預設）→ buildCleanCutSimai() 把片段從原始碼切出來、補回開頭的
+   |      · cleanCut=true（預設）→ buildCleanCutSimai() 把片段從原始碼精準切出來、補回開頭的
    |        (BPM)/{分音}，整段從頭渲染
    |      · cleanCut=false → 送整份譜面 + start/end，由渲染器只畫那一段
-   | (13) 產出 GIF 後由 Bot 發送至頻道（附歌名與段落，並帶「▶ 繼續看譜」按鈕），
+   | (13) 產出 GIF 後由 Bot 發送至頻道（附歌名與 Combo 區間，並帶「▶ 繼續看譜」按鈕），
    |      並刪除之前的進度提示訊息
    v
 [Discord 聊天頻道] (Bot 發送 GIF，刪除提示)
    |
    | (14) 有人點「▶ 繼續看譜」
-   |      --> bot.js 把該段 combo 區間存進 resume.js（key = userId，一次性、2 分鐘 TTL）
+   |      --> bot.js 把該段逗號區間（startComma/endComma）存進 resume.js（key = userId，一次性、2 分鐘 TTL）
    |      --> interaction.launchActivity() 開啟 Activity
    |      --> Activity 驗證身分後 GET /.proxy/api/resume?userId=... 取回並還原選取區間與播放位置
 ```
@@ -306,11 +309,16 @@ stateDiagram-v2
    - 依照 Note 的類型（`tap`、`hold`、`slide`、`touch`，以及 `isBreak`）累加至該小節的計數桶中，生成二維密度矩陣 `D`。
    - 密度矩陣會傳送給下方畫布，動態繪製成柱狀密度分布圖，並由主播放進度線橫跨其上。
 3. **選取範圍座標映射高亮**：
-   - 雖然前端範圍選取器（rA/rB）是基於音符（Combo）編號定位的，但音符密度圖是基於「小節」繪製的。
-   - 前端繪製選取高亮時，會自動將 `range.start` 和 `range.end`（Combo 索引）對應的音符時間戳記傳入 `measureIndex` 換算出對應的小節邊界，以在密度圖上渲染出精確的高亮反白區塊。
+   - 選取範圍（`range.start`/`range.end`）內部一律是**逗號索引**（`indexToTime` 的陣列位置），不是音符編號——
+     同一個逗號可能沒有音符（休止拍）也可能有好幾顆（chord），逗號索引才是跟實際切割邊界一一對應、前後端保證一致的單位。
+   - 顯示給人看的一律換算成 Combo 編號（`comboRangeSpan()`：找出範圍內第一顆／最後一顆音符是第幾個 combo），
+     逗號索引本身不會出現在畫面上。
+   - 音符密度圖是基於「小節」繪製的，繪製選取高亮時會把 `range.start`/`range.end` 對應的逗號時間戳記
+     （`C[range.start]`／`C[range.end + 1]`）傳入 `measureIndex` 換算出小節邊界，在密度圖上渲染精確的高亮反白區塊。
 4. **響應式佈局 (Responsive Layout)**：
-   - 寬螢幕（≥ 768px）為左右雙欄：左欄是譜面＋左右各一排導覽鍵＋播放鍵，右欄是時間軸、密度圖與選取區間。
-   - 窄螢幕（< 768px，手機）降級為單欄上下堆疊，並且**整頁不捲動**：譜面與播放鍵固定不壓縮，其餘元件為固定高度，譜面吸收剩餘空間自動縮放（實測 360–430px 寬的手機上譜面約 200–280px）。
+   - 寬螢幕（≥ 768px）為左右雙欄：左欄是譜面＋左右各一排導覽鍵（含播放鍵，見下方操作說明），右欄是時間軸、密度圖與選取區間。
+   - 窄螢幕（< 768px，手機）降級為單欄上下堆疊，並且**整頁不捲動**：譜面固定不壓縮，其餘元件（HUD、時間軸、選取面板等）
+     全部盡量壓縮高度，把空出來的空間讓給譜面畫布自動放大（`.player-row` 的高度上限會依實際情況調整）。
    - 子容器與時間軸皆設 `min-width: 0`，避免在極限寬度下溢出被 Discord 用戶端裁切。
 5. **畫布自適應縮放 (Canvas Dynamic Scaling)**：
    - `resizeCanvas()` 取 `#stage` 可用寬高的**較小值**當邊長，確保譜面永遠是正方形。
@@ -325,16 +333,17 @@ stateDiagram-v2
 
 | 功能 | 說明 |
 |---|---|
-| **選取區間** | 拖曳滑桿兩端的端點；拖到哪譜面就即時 seek 到哪 |
-| **雙擊鎖定端點** | 雙擊（手機雙點）離手指最近的端點可鎖定／解鎖，鎖定後變琥珀色且拖不動，避免調好被誤觸 |
-| **方向鍵微調** | 碰過端點 → ←/→ 調該端點（±1 combo，Shift ±10）；碰過進度條 → ←/→ 調播放進度（±0.1s，Shift ±1 小節）。掛在 `document` 上，點過別的元件焦點跑掉也還能用 |
-| **導覽鍵連動** | ＜＜＜/＜＜/＜/＞/＞＞/＞＞＞ 移動播放頭時，「作用中」的端點（`◆` 標記）會跟著走 |
+| **選取區間** | 起點／終點各自一條獨立滑桿（避免兩端太近難以點準），拖到哪譜面就即時 seek 到哪；滑塊正上方會浮出一個小框，顯示那一格逗號實際的 simai 原文 |
+| **雙擊定位播放頭** | 雙擊（手機雙點）某一條滑桿，播放頭會直接跳到那個端點目前的位置 |
+| **方向鍵微調** | 碰過端點 → ←/→ 精準微調 1 個逗號（Shift ±10 個逗號）；碰過進度條 → ←/→ 精準走 1 個逗號（Shift 約 ±3 秒、自動吸附到最近的逗號）。掛在 `document` 上，點過別的元件焦點跑掉也還能用 |
+| **導覽鍵（三層，左右對稱）** | ＜＜＜/＞＞＞ 約 ±3 秒（吸附逗號）；＜＜/＞＞ 跳到上一顆／下一顆音符；＜/＞ 精準走 1 個逗號。移動播放頭時「作用中」的端點（`◆` 標記）會跟著走 |
+| **▶ 播放** | 拆成兩顆分別嵌在左右導覽欄最下面，功能完全一樣，不管左右手拿手機都點得到 |
 | **⚙ 設定** | 倍速（0.25–1.00）、流速、音效模式、切的乾淨。浮層用 `position: fixed`，不會被 `overflow:hidden` 的祖先切掉 |
 | **音效模式** | 三段：靜音／簡易／完整。**簡易**是用振盪器即時合成的短音，零下載、點下去馬上有聲；**完整**才會下載 wav，且下載期間先用簡易音頂著，載完自動換 |
-| **切的乾淨** | 預設開啟。把選取範圍從 simai 原始碼切出來成獨立片段（切到 hold／slide 中間也照切），再補回開頭的 `(BPM)`／`{分音}` 送去渲染 |
+| **切的乾淨** | 預設開啟。把選取範圍從 simai 原始碼依**逗號索引**精準切出來成獨立片段（切到 hold／slide 中間也照切，但整顆音符連同宣告的時值一起帶走），再補回開頭的 `(BPM)`／`{分音}` 送去渲染——選第幾個逗號就切第幾個逗號，不再靠時間門檻近似猜測 |
+| **送出前確認** | 按「✅ 傳送此區間」不會直接送出，先跳彈窗顯示這次實際會送出去的 simai 內容（跟後端渲染用的一字不差），確認過再按「確認送出」 |
 
-> **切的乾淨的先天限制**：切割是依 simai 的**逗號段**邊界，實際切點會落在最接近的逗號上，
-> 可能與所選 combo 差一兩顆。要精確到單顆 combo 得改動原始碼結構。
+畫面上顯示的「Combo x - y」是給人看的：內部實際定位單位是逗號索引，透過 `comboRangeSpan()`（前端）／`comboRangeOf()`（後端）換算成範圍內第一顆／最後一顆音符的 combo 編號，兩邊算法一致。
 
 ---
 
@@ -346,12 +355,14 @@ stateDiagram-v2
 
 ```
 web/render.html        無 UI 渲染頁：window.renderChartToFrames(simai, opts) 逐幀 PNG 串回 Node
-web/Scripts/           自 web-mai-chart-x 提取的核心（helper.js 有改，見下方致謝）
+web/Scripts/           自 web-mai-chart-x 提取的核心（helper.js / renderer.js 有改，見下方致謝）
+web/Scripts/simaiCut.js  逗號切割／裁切純函式（sliceSource / analyzeHeader / buildCleanCutSimai），
+                        前端（送出前預覽）與後端（src/chart.js re-export）共用同一份
 web/Skin/  web/Fonts/  素材
 web/Sounds/            音效素材（Activity 的「完整音效」模式使用）
 src/server.js          服務 web/ 的極簡靜態伺服器
 src/render.js          SimaiRenderService：常駐瀏覽器 + ffmpeg GIF 壓縮階梯
-src/chart.js           譜面讀取、依時間切 simai 片段、切的乾淨（buildCleanCutSimai）
+src/chart.js           譜面讀取（loadChart），並 re-export simaiCut.js 的切割函式
 src/resume.js          「繼續看譜」的續看位置暫存（一次性、2 分鐘 TTL）
 src/activity-server.js Activity 後端：靜態頁 + OAuth token 交換 + 渲染請求 + 續看
 src/cli.js             本機測試 CLI
@@ -364,7 +375,7 @@ activity/public/       Activity 靜態頁與打包後的 dist/main.js
 ## 致謝
 
 `web/Scripts/`（decode.js / renderer.js / helper.js / indexDB.js）與 `web/Skin/`、`web/Fonts/`
-均直接提取自 [susuy0725/web-mai-chart-x](https://github.com/susuy0725/web-mai-chart-x)，渲染邏輯（renderer.js / decode.js）本身未修改。
+均直接提取自 [susuy0725/web-mai-chart-x](https://github.com/susuy0725/web-mai-chart-x)，`decode.js` 本身未修改。
 
 `helper.js` 的 `AudioManager` 有兩處為本專案調整：
 
@@ -372,6 +383,9 @@ activity/public/       Activity 靜態頁與打包後的 dist/main.js
 - **移除圖片與音效的 IndexedDB Blob 快取**：iOS WKWebView 在第二次開啟、需要一次讀回大量 Blob 時，
   會在原生層級直接把整個 WebView 砍掉（沒有 JS 錯誤、也不會觸發 `pagehide`），表現為「開第二次必閃退」。
   改成每次直接 fetch 同源靜態檔即可解決。
+
+`renderer.js` 的 COMBO 字樣顏色（`_middleDisplayConfig1/2`）原本是暗紅棕色，在黑底 GIF 上幾乎看不出顏色，
+改成跟 tap 音符同色系的亮粉色。
 該專案的 Skin 與音訊素材則源自 [LingFeng-bbben/MajdataView](https://github.com/LingFeng-bbben/MajdataView) 與
 [re-poem/MajdataViewX](https://github.com/re-poem/MajdataViewX)。
 

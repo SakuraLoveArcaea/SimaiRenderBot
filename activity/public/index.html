@@ -51,12 +51,14 @@
         <span>Combo <b id="hudCombo">0</b> / <span id="hudComboMax">-</span></span>
       </div>
 
-      <!-- 導覽鍵分列譜面兩側：左＝後退、右＝前進 -->
+      <!-- 導覽鍵分列譜面兩側：左＝後退、右＝前進。播放鍵拆兩顆分別放在左右欄最下面，
+           不管左右手拿手機都點得到，也不用再獨立一整排（把那排高度讓給譜面畫布）。 -->
       <div class="player-row">
         <div class="nav-col">
-          <button id="b_m5" title="後退5小節" disabled>＜＜＜</button>
-          <button id="b_m1" title="後退1小節" disabled>＜＜</button>
-          <button id="b_f1" title="微調 -0.1s" disabled>＜</button>
+          <button id="b_m5" title="後退約3秒" disabled>＜＜＜</button>
+          <button id="b_m1" title="跳到上一顆音符" disabled>＜＜</button>
+          <button id="b_f1" title="後退 1 個逗號" disabled>＜</button>
+          <button id="playBtnL" class="btn-play" disabled>▶</button>
         </div>
 
         <div id="stage">
@@ -64,14 +66,11 @@
         </div>
 
         <div class="nav-col">
-          <button id="b_p5" title="前進5小節" disabled>＞＞＞</button>
-          <button id="b_p1" title="前進1小節" disabled>＞＞</button>
-          <button id="b_f2" title="微調 +0.1s" disabled>＞</button>
+          <button id="b_p5" title="前進約3秒" disabled>＞＞＞</button>
+          <button id="b_p1" title="跳到下一顆音符" disabled>＞＞</button>
+          <button id="b_f2" title="前進 1 個逗號" disabled>＞</button>
+          <button id="playBtnR" class="btn-play" disabled>▶</button>
         </div>
-      </div>
-
-      <div class="controls">
-        <button id="playBtn" disabled>▶</button>
       </div>
     </div>
 
@@ -87,12 +86,24 @@
             <span class="range-title">✂️ 選取並傳送</span>
             <span id="rangeLabel">0 - 0</span>
           </div>
-          <div id="rangeTrack">
-            <div class="range-track-bg"></div>
-            <div class="range-track-fill" id="rangeFill"></div>
-            <!-- 終點預設就放在最右端：載入完成前兩個滑塊才不會疊在最左邊 -->
-            <input id="rangeA" type="range" min="0" max="100" value="0" step="1" disabled>
-            <input id="rangeB" type="range" min="0" max="100" value="100" step="1" disabled>
+          <!-- 起點／終點各自獨立一整條滑桿，避免兩個端點太近時互相難點選 -->
+          <div class="range-row">
+            <span class="range-row-label">起</span>
+            <div class="range-track" id="rangeTrackA">
+              <div class="range-track-bg"></div>
+              <input id="rangeA" type="range" min="0" max="100" value="0" step="1" disabled>
+              <!-- 端點框：浮在滑塊正上方，顯示那一格逗號實際的 simai 文字，不佔版面空間 -->
+              <div class="range-tip" id="rangeTipA"></div>
+            </div>
+          </div>
+          <div class="range-row">
+            <span class="range-row-label">終</span>
+            <!-- 終點預設就放在最右端：載入完成前才不會疊在起點上 -->
+            <div class="range-track" id="rangeTrackB">
+              <div class="range-track-bg"></div>
+              <input id="rangeB" type="range" min="0" max="100" value="100" step="1" disabled>
+              <div class="range-tip" id="rangeTipB"></div>
+            </div>
           </div>
           <div id="rangeEnds">
             <button id="setStart" disabled>← 起點</button>
@@ -120,6 +131,20 @@
     </div>
   </div>
 </div>
+
+<!-- 送出前確認：顯示這次實際會送給後端渲染的 simai 內容，確認過再按送出 -->
+<div id="confirmModal" class="modal-overlay" hidden>
+  <div class="modal-box">
+    <h3>確認送出內容</h3>
+    <p id="confirmMeta" class="modal-meta"></p>
+    <pre id="confirmSimaiText" class="modal-simai-text"></pre>
+    <div class="modal-actions">
+      <button id="confirmCancelBtn" class="btn-modal-cancel">取消</button>
+      <button id="confirmSendBtn" class="btn-export">✅ 確認送出</button>
+    </div>
+  </div>
+</div>
+
 <script type="module" src="dist/main.js"></script>
 </body>
 </html>

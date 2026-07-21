@@ -623,7 +623,7 @@ function missingHeaderReply(userId, simaiText, source = null) {
 }
 
 /**
- * 點「▶ 繼續看譜」：把該片段的 combo 區間記下來，然後開啟 Activity。
+ * 點「▶ 繼續看譜」：把該片段的逗號區間記下來，然後開啟 Activity。
  * Discord 的 launchActivity() 不能夾帶參數，所以位置改走伺服器端暫存——
  * Activity 啟動、驗證完身分後會用自己的 user id 來 /api/resume 取回（見 activity-server.js）。
  * 任何人都能點（等於「我也想看這段」），各自的續看位置以 user id 分開存。
@@ -631,8 +631,8 @@ function missingHeaderReply(userId, simaiText, source = null) {
 async function handleResumeButton(interaction) {
     const [, startStr, endStr] = interaction.customId.split(':');
     saveResumeSession(interaction.user.id, {
-        startCombo: Number(startStr) || 0,
-        endCombo: Number(endStr) || 0,
+        startComma: Number(startStr) || 0,
+        endComma: Number(endStr) || 0,
     });
     await interaction.launchActivity();
 }

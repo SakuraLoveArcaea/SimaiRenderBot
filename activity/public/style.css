@@ -182,14 +182,6 @@ header .sub {
   font-weight: 600;
 }
 
-.controls {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-}
-
 /* 譜面與左右導覽鍵並排 */
 .player-row {
   display: flex;
@@ -320,24 +312,19 @@ header .sub {
   cursor: not-allowed;
 }
 
-/* 播放鍵獨佔整排 */
-#playBtn {
+/* 播放鍵拆兩顆分別嵌在左右導覽欄最下面（見 .nav-col），不用再獨立一整排。
+   兩顆狀態永遠同步，純粹方便左右手都點得到。 */
+.btn-play {
   background: var(--play);
   border-color: var(--play);
   color: #fff;
   font-weight: 700;
-  width: 100%;
-  border-radius: 8px;
-  border: 1px solid var(--play);
-  padding: 10px;
-  font-size: 18px;
-  cursor: pointer;
-  touch-action: manipulation;
+  font-size: 14px;
 }
 
-#playBtn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.nav-col button.btn-play:hover:not(:disabled) {
+  background: var(--play);
+  opacity: 0.85;
 }
 
 /* ---------- 設定選單（與歌名同一水平線，靠左） ---------- */
@@ -502,8 +489,8 @@ header .sub {
 }
 
 #rangePanel {
-  margin-top: 10px;
-  padding: 10px 12px 12px;
+  margin-top: 6px;
+  padding: 8px 10px 10px;
   background: rgba(0, 0, 0, 0.18);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -531,10 +518,28 @@ header .sub {
   margin-left: auto;
 }
 
-#rangeTrack {
+/* 起點／終點各自獨立一整條滑桿：離太近時不用再猜是要點哪一個 */
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 上面留出端點框的空間，才不會蓋到上一排（見 .range-tip） */
+  margin-top: 24px;
+}
+
+.range-row-label {
+  flex: 0 0 auto;
+  width: 16px;
+  font-size: 11px;
+  color: var(--dim);
+  text-align: center;
+}
+
+.range-track {
   position: relative;
-  height: 22px;
-  margin-bottom: 10px;
+  flex: 1;
+  min-width: 0;
+  height: 20px;
 }
 
 .range-track-bg {
@@ -548,25 +553,12 @@ header .sub {
   background: #26264c;
 }
 
-.range-track-fill {
-  position: absolute;
-  top: 50%;
-  /* 預設整條填滿，對應「起點在最左、終點在最右」的初始狀態 */
-  left: 0;
-  width: 100%;
-  height: 5px;
-  transform: translateY(-50%);
-  border-radius: 3px;
-  background: var(--mine);
-  pointer-events: none;
-}
-
-#rangeTrack input {
+.range-track input {
   position: absolute;
   left: 0;
   top: 0;
   width: 100%;
-  height: 22px;
+  height: 20px;
   margin: 0;
   appearance: none;
   background: transparent;
@@ -575,14 +567,48 @@ header .sub {
   touch-action: none;
 }
 
-#rangeTrack input::-webkit-slider-runnable-track,
-#rangeTrack input::-moz-range-track {
+.range-track input::-webkit-slider-runnable-track,
+.range-track input::-moz-range-track {
   height: 5px;
-  margin-top: 8.5px;
+  margin-top: 7.5px;
   background: transparent;
 }
 
-#rangeTrack input::-webkit-slider-thumb {
+/* 端點框：絕對定位浮在滑塊正上方，隨滑塊移動。.range-row 的 margin-top 已經
+   幫每一排都預留了空間，不會蓋到上一排。 */
+.range-tip {
+  position: absolute;
+  bottom: 100%;
+  margin-bottom: 6px;
+  transform: translateX(-50%);
+  max-width: 96px;
+  padding: 2px 5px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: 'mono', monospace;
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
+  z-index: 5;
+}
+
+.range-tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--line);
+}
+
+.range-track input::-webkit-slider-thumb {
   appearance: none;
   pointer-events: auto;
   width: 15px;
@@ -596,7 +622,7 @@ header .sub {
   transition: transform .12s ease;
 }
 
-#rangeTrack input::-moz-range-thumb {
+.range-track input::-moz-range-thumb {
   appearance: none;
   pointer-events: auto;
   width: 13px;
@@ -609,58 +635,34 @@ header .sub {
   transition: transform .12s ease;
 }
 
-#rangeTrack input:hover:not(:disabled)::-webkit-slider-thumb,
-#rangeTrack input:active:not(:disabled)::-webkit-slider-thumb {
+.range-track input:hover:not(:disabled)::-webkit-slider-thumb,
+.range-track input:active:not(:disabled)::-webkit-slider-thumb {
   transform: scale(1.15);
 }
 
-#rangeTrack input:disabled::-webkit-slider-thumb,
-#rangeTrack input:disabled::-moz-range-thumb {
+.range-track input:disabled::-webkit-slider-thumb,
+.range-track input:disabled::-moz-range-thumb {
   background: var(--dim);
   border-color: var(--dim);
   cursor: not-allowed;
 }
 
 /* 作用中的端點（最後一次點過/拖過的那個）：按導覽鍵時它會跟著播放頭走 */
-#rangeTrack input.active:not(.locked)::-webkit-slider-thumb {
+.range-track input.active::-webkit-slider-thumb {
   border-color: var(--tap);
   box-shadow: 0 0 0 3px rgba(255, 79, 165, .3), 0 1px 4px rgba(0, 0, 0, .5);
 }
 
-#rangeTrack input.active:not(.locked)::-moz-range-thumb {
+.range-track input.active::-moz-range-thumb {
   border-color: var(--tap);
 }
 
-/* 雙擊鎖定的端點：不再吃指標事件，避免調好之後被誤觸；用琥珀色標示 */
-#rangeTrack input.locked {
-  pointer-events: none;
-}
-
-#rangeTrack input.locked::-webkit-slider-thumb {
-  pointer-events: none;
-  background: var(--hold);
-  border-color: #fff;
-  box-shadow: 0 0 0 3px rgba(255, 210, 62, .3), 0 1px 4px rgba(0, 0, 0, .5);
-  cursor: not-allowed;
-}
-
-#rangeTrack input.locked::-moz-range-thumb {
-  pointer-events: none;
-  background: var(--hold);
-  border-color: #fff;
-  cursor: not-allowed;
-}
-
 /* 區間超過渲染秒數上限：只用紅色提示，不再跳文字警告 */
-#rangeTrack.over-limit .range-track-fill {
-  background: #f23f43;
-}
-
-#rangeTrack.over-limit input:not(:disabled)::-webkit-slider-thumb {
+.range-track.over-limit input:not(:disabled)::-webkit-slider-thumb {
   border-color: #f23f43;
 }
 
-#rangeTrack.over-limit input:not(:disabled)::-moz-range-thumb {
+.range-track.over-limit input:not(:disabled)::-moz-range-thumb {
   border-color: #f23f43;
 }
 
@@ -735,6 +737,86 @@ header .sub {
 .app-footer {
   min-height: 20px;
   width: 100%;
+}
+
+/* 送出前確認彈窗：蓋滿整個視窗，內容區塊自己捲動（頁面本身不能滾） */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 16px;
+}
+
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal-box {
+  width: 100%;
+  max-width: 480px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+}
+
+.modal-box h3 {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.modal-meta {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.modal-simai-text {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font-family: 'mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.modal-actions .btn-export {
+  flex: 1;
+}
+
+.btn-modal-cancel {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--dim);
+  font-size: 13px;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.btn-modal-cancel:hover {
+  background: #2a2a55;
 }
 
 .message {
@@ -824,7 +906,8 @@ header .sub {
     flex: 1 1 auto;
     height: auto;
     min-height: 132px;
-    max-height: 300px;
+    /* 其他元件的高度都省下來了，這裡把上限放寬，讓省下來的空間真的給譜面用 */
+    max-height: 360px;
   }
 
   .nav-col {
@@ -839,7 +922,7 @@ header .sub {
     gap: 6px;
   }
 
-  .controls, #timeline {
+  #timeline {
     flex-shrink: 0;
   }
 
@@ -855,15 +938,15 @@ header .sub {
   }
 
   #densityCanvas {
-    height: 40px;
+    height: 32px;
   }
 
   #timeline {
-    padding: 8px 10px 10px;
+    padding: 6px 8px 8px;
   }
 
   header {
-    padding-bottom: 6px;
+    padding-bottom: 4px;
   }
 
   header .sub {
@@ -895,9 +978,8 @@ header .sub {
     padding: 6px 2px;
   }
 
-  #playBtn {
-    padding: 12px;
-    font-size: 20px;
+  .btn-play {
+    font-size: 15px;
   }
 
   .btn-settings {
@@ -935,29 +1017,29 @@ header .sub {
     padding: 6px 8px;
   }
 
-  /* 選取範圍：滑桿與按鈕都加大 */
-  #rangeTrack {
-    height: 40px;
+  /* 選取範圍：滑桿加大到方便點的程度，但不像桌機版那麼寬鬆（見上面 steal-height 註解） */
+  .range-track {
+    height: 30px;
   }
 
-  #rangeTrack input {
-    height: 40px;
+  .range-track input {
+    height: 30px;
   }
 
-  #rangeTrack input::-webkit-slider-runnable-track,
-  #rangeTrack input::-moz-range-track {
-    margin-top: 17.5px;
+  .range-track input::-webkit-slider-runnable-track,
+  .range-track input::-moz-range-track {
+    margin-top: 12.5px;
   }
 
-  #rangeTrack input::-webkit-slider-thumb {
-    width: 22px;
-    height: 22px;
-    margin-top: -8.5px;
-  }
-
-  #rangeTrack input::-moz-range-thumb {
+  .range-track input::-webkit-slider-thumb {
     width: 20px;
     height: 20px;
+    margin-top: -7.5px;
+  }
+
+  .range-track input::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
   }
 
   #measureSlider::-webkit-slider-thumb {
@@ -967,7 +1049,7 @@ header .sub {
   }
 
   #rangeEnds button, #rangeActions button {
-    min-height: 38px;
+    min-height: 36px;
     font-size: 12px;
   }
 
@@ -977,51 +1059,23 @@ header .sub {
     min-width: 92px;
   }
 
-  /* 手機版把「跳到起點／預覽」和「傳送」併成同一排，省下一整列的高度 */
-  #rangePanel {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1.3fr;
-    gap: 6px;
-    align-items: center;
-  }
-
-  #rangeHeader, #rangeTrack, #rangeEnds {
-    grid-column: 1 / -1;
-    margin-bottom: 0;
-  }
-
-  #rangeActions {
-    grid-column: 1 / 3;
-    margin-bottom: 0;
-  }
-
+  /* 「跳到起點／預覽」跟「傳送」分開兩行：擠在同一排太窄，手機上很難點準 */
   .btn-export {
-    grid-column: 3;
-    min-height: 42px;
+    min-height: 40px;
     font-size: 13px;
-    padding: 8px 4px;
+    padding: 6px 4px;
   }
 
   #rangeEnds, #rangeActions {
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   }
 
-  #rangeTrack {
-    height: 34px;
-    margin-bottom: 6px;
-  }
-
-  #rangeTrack input {
-    height: 34px;
-  }
-
-  #rangeTrack input::-webkit-slider-runnable-track,
-  #rangeTrack input::-moz-range-track {
-    margin-top: 14.5px;
+  .range-row {
+    margin-top: 20px;
   }
 
   #rangeHeader {
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   }
 
   #measureSlider {
