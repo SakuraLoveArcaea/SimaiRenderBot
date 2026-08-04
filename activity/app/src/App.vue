@@ -58,7 +58,7 @@ async function onSelectChart(chartId) {
     rangeSel.initBounds(maxComma, { start: 0, end: maxComma });
     engine.seek(0);
     rangeSel.setActiveEndpoint(null);
-    inputsEnabled.value = true;
+    inputsEnabled.value = true; 
     showMessage(`✅ 已切換至譜面：${chart.chartName.value}`, 'success');
   } catch (e) {
     console.error('切換譜面失敗:', e);
@@ -192,6 +192,17 @@ function onSetHs(v) {
   engine.setHs(v);
 }
 
+function onCycleMirror() {
+  engine.pause();
+  chart.cycleMirror();
+  engine.resetPlaybackState();
+  const maxComma = chart.C.value.length - 2;
+  rangeSel.initBounds(maxComma, { start: 0, end: maxComma });
+  engine.seek(0);
+  rangeSel.setActiveEndpoint(null);
+  showMessage(`🔄 鏡像模式：${chart.mirrorLabel.value}`, 'info');
+}
+
 // ---------- 匯出：先跳確認彈窗，看過實際會送出的內容再真的送出 ----------
 function openConfirmModal() {
   const commaSpan = rangeSel.range.value.end - rangeSel.range.value.start + 1;
@@ -305,12 +316,14 @@ onUnmounted(() => {
       :sfx-mode-label="sfx.sfxModeLabel.value"
       :sfx-off="sfx.sfxMode.value === 'off'"
       :clean-cut="rangeSel.cleanCut.value"
+      :mirror-label="chart.mirrorLabel.value"
       :disabled="!inputsEnabled"
       @update:speed="engine.setSpeed"
       @update:hs="onSetHs"
       @update:sfx-volume="sfx.setSfxVolume"
       @cycle-sfx-mode="sfx.cycleSfxMode"
       @toggle-clean-cut="rangeSel.cleanCut.value = !rangeSel.cleanCut.value"
+      @cycle-mirror="onCycleMirror"
     />
 
     <div class="main-content">

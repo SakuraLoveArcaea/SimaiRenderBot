@@ -1,6 +1,44 @@
-import { ref, shallowRef } from 'vue';
+import { ref, shallowRef, computed } from 'vue';
 import { simaiDecode } from '../../../../engine/Scripts/decode.js';
 import { splitCommaParts } from '../../../../engine/Scripts/simaiCut.js';
+import { contantRotate, flipSelectedText } from '../../../../engine/Scripts/helper.js';
+
+const MIRROR_MODES = ['原譜', '左右', '上下', '全'];
+
+/**
+ * 根據鏡像模式轉換 simai 原始文字。
+ * 0 = 原譜（不動），1 = 左右翻轉，2 = 上下翻轉，3 = 全（旋轉 180°）
+ */
+function applyMirror(text, mode) {
+  if (!text || mode === 0) return text;
+  if (mode === 3) {
+    // 全 = 旋轉 180°
+    return contantRotate(text, 4);
+  }
+  if (mode === 1) {
+    // 左右翻轉
+    const deMap = { 1: 1, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3, 8: 2 };
+    return flipSelectedText(text, deMap, (ch) => {
+      const n = parseInt(ch, 10);
+      return ((8 - n) % 8 + 1).toString();
+    }, {
+      p: 'q', q: 'p',
+      s: 'z', z: 's',
+      '<': '>', '>': '<'
+    });
+  }
+  if (mode === 2) {
+    // 上下翻轉
+    const deMap = { 1: 5, 2: 4, 3: 3, 4: 2, 5: 1, 6: 8, 7: 7, 8: 6 };
+    return flipSelectedText(text, deMap, (ch) => {
+      const n = parseInt(ch, 10);
+      return ((12 - n) % 8 + 1).toString();
+    }, {
+      p: 'q', q: 'p'
+    });
+  }
+  return text;
+}
 
 function processChartData(decoded) {
   const bpm = decoded.bpm || 60;
@@ -54,8 +92,12 @@ function processChartData(decoded) {
 
 /** 譜面資料的家：載入、解碼、前處理，全部包在一個 composable 裡 */
 export function useChartData() {
-  const chartText = ref('');
+  const chartText = ref('');     // 經鏡像轉換後的文字（實際用於渲染與匯出）
+  const originalText = ref(''); // 原始未轉換的文字
   const chartName = ref('');
+  const mirrorMode = ref(0);    // 0=原譜, 1=左右, 2=上下, 3=全(180°)
+  const mirrorLabel = computed(() => MIRROR_MODES[mirrorMode.value] || '原譜');
+
   // 這些是大型解析結果，整包替換而非逐欄位改動，用 shallowRef 避免 Vue 把內部每個元素都包成代理
   const DATA = shallowRef(null);
   const M = shallowRef([]);
@@ -87,18 +129,23 @@ export function useChartData() {
     if (!res.ok) throw new Error(`譜面獲取失敗：${res.status}`);
     const json = await res.json();
     const chart = (json && json.ok !== undefined) ? (json.data || {}) : json;
-    return decodeAndPopulate(chart.text, chart.name);
+    originalText.value = chart.text;
+    const transformed = applyMirror(chart.text, mirrorMode.value);
+    return decodeAndPopulate(transformed, chart.name);
   }
 
   /** 不透過 fetch，直接把一段 simai 原文解碼成獨立的一份譜面資料（給預覽用的片段） */
   function loadFromText(text, name) {
-    return decodeAndPopulate(text, name);
+    originalText.value = text;
+    const transformed = applyMirror(text, mirrorMode.value);
+    return decodeAndPopulate(transformed, name);
   }
 
   /** 直接借用另一份已經解碼好的資料（不重新解碼），給「沿用主譜面」的預覽情境用 */
   function adoptFrom(other) {
     chartText.value = other.chartText.value;
     chartName.value = other.chartName.value;
+    originalText.value = other.originalText.value;
     DATA.value = other.DATA.value;
     M.value = other.M.value;
     N.value = other.N.value;
@@ -107,5 +154,22 @@ export function useChartData() {
     commaParts.value = other.commaParts.value;
   }
 
-  return { chartText, chartName, DATA, M, N, D, C, commaParts, loadChart, loadFromText, adoptFrom };
+  /**
+   * 循環切換鏡像模式（原譜 → 左右 → 上下 → 全 → 原譜…）
+   * 並以新模式重新解碼譜面資料。回傳新模式的索引。
+   */
+  function cycleMirror() {
+    mirrorMode.value = (mirrorMode.value + 1) % MIRROR_MODES.length;
+    if (originalText.value) {
+      const transformed = applyMirror(originalText.value, mirrorMode.value);
+      decodeAndPopulate(transformed, chartName.value);
+    }
+    return mirrorMode.value;
+  }
+
+  return {
+    chartText, originalText, chartName, DATA, M, N, D, C, commaParts,
+    mirrorMode, mirrorLabel, cycleMirror,
+    loadChart, loadFromText, adoptFrom,
+  };
 }

@@ -1078,8 +1078,10 @@ header .sub {
 }
 
 .preview-modal-box {
-  max-width: 400px;
-  align-items: center;
+  max-width: 600px;
+  width: 94vw;
+  max-height: 94vh;
+  align-items: stretch;
 }
 
 .preview-stage {
@@ -1087,6 +1089,17 @@ header .sub {
   justify-content: center;
   align-items: center;
   width: 100%;
+  padding: 8px 0;
+}
+
+#previewStage {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: min(100%, 480px, 52vh);
+  height: min(100%, 480px, 52vh);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
 }
 
 #previewCanvas {
@@ -1094,7 +1107,8 @@ header .sub {
   background: #0c0c1e;
   border-radius: 14px;
   border: 1px solid var(--line);
-  width: min(100%, 60vh);
+  width: 100% !important;
+  height: 100% !important;
   aspect-ratio: 1 / 1;
 }
 

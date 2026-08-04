@@ -10,9 +10,10 @@ const props = defineProps({
   sfxModeLabel: { type: String, required: true },
   sfxOff: { type: Boolean, default: false },
   cleanCut: { type: Boolean, required: true },
+  mirrorLabel: { type: String, required: true },
   disabled: { type: Boolean, default: false },
 });
-const emit = defineEmits(['update:speed', 'update:hs', 'update:sfx-volume', 'cycle-sfx-mode', 'toggle-clean-cut']);
+const emit = defineEmits(['update:speed', 'update:hs', 'update:sfx-volume', 'cycle-sfx-mode', 'toggle-clean-cut', 'cycle-mirror']);
 
 const panelRoot = ref(null);
 defineExpose({ panelRoot });
@@ -49,6 +50,12 @@ defineExpose({ panelRoot });
         title="開：精準切在選取的 combo 上，結尾不多留（就算切斷 hold／slide）。關：結尾多留一點讓判定特效收完。"
         @click="emit('toggle-clean-cut')"
       >✂ 切的乾淨：{{ cleanCut ? '開' : '關' }}</button>
+    </span>
+    <span class="speedbox">
+      <button class="btn-sfx-mode"
+        title="循環切換：原譜 → 左右翻轉 → 上下翻轉 → 全（180°旋轉）"
+        @click="emit('cycle-mirror')"
+      >🔄 鏡像：{{ mirrorLabel }}</button>
     </span>
   </div>
 </template>
