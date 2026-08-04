@@ -3,14 +3,14 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import { loadChart, buildCleanCutSimai } from './chart.js';
+import { loadChart, listCharts, buildCleanCutSimai } from './chart.js';
 import { takeResumeSession } from './resume.js';
 
 /** 「繼續看譜」按鈕的 customId 前綴，bot.js 會依這個前綴接手處理 */
 export const RESUME_BTN_PREFIX = 'resume:';
 
 const PUBLIC_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'activity', 'public');
-const WEB_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
+const ENGINE_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine');
 
 const MIME = {
     '.html': 'text/html; charset=utf-8',
@@ -52,9 +52,15 @@ export function startActivityServer(client, service) {
                 console.log('[Activity Server] 收到渲染請求');
                 return await handleRender(req, res, client, service);
             }
+            if (req.method === 'GET' && url.pathname === '/api/providers') {
+                return handleListProviders(req, res);
+            }
+            if (req.method === 'GET' && url.pathname === '/api/charts') {
+                return await handleListCharts(url, req, res);
+            }
             if (req.method === 'GET' && url.pathname === '/api/chart') {
                 console.log('[Activity Server] 收到獲取譜面請求');
-                return await handleGetChart(req, res);
+                return await handleGetChart(url, req, res);
             }
             if (req.method === 'POST' && url.pathname === '/api/debug-log') {
                 return await handleDebugLog(req, res);
@@ -91,16 +97,16 @@ async function handleStatic(pathname, res) {
             res.end(data);
             return;
         } catch {
-            // 讀不到則繼續嘗試 web/ 底下的資源 (如 Skin, Fonts)
+            // 讀不到則繼續嘗試 engine/ 底下的資源 (如 Skin, Fonts)
         }
     }
 
-    // 備份讀取 web/ 的檔案
-    const webFilePath = path.join(WEB_ROOT, safePath);
-    if (webFilePath.startsWith(WEB_ROOT)) {
+    // 備份讀取 engine/ 的檔案
+    const engineFilePath = path.join(ENGINE_ROOT, safePath);
+    if (engineFilePath.startsWith(ENGINE_ROOT)) {
         try {
-            const data = await fs.readFile(webFilePath);
-            res.writeHead(200, { 'Content-Type': MIME[path.extname(webFilePath)] ?? 'application/octet-stream' });
+            const data = await fs.readFile(engineFilePath);
+            res.writeHead(200, { 'Content-Type': MIME[path.extname(engineFilePath)] ?? 'application/octet-stream' });
             res.end(data);
             return;
         } catch {
@@ -364,15 +370,42 @@ function handleResume(url, res) {
         .end(JSON.stringify(session ?? {}));
 }
 
-/** 獲取內建的 testChart 譜面資料 */
-async function handleGetChart(req, res) {
+/** 輔助：發送 JSON 成功回應 */
+function sendJsonSuccess(res, data) {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+        .end(JSON.stringify({ ok: true, data }));
+}
+
+/** 輔助：發送 JSON 錯誤回應 */
+function sendJsonError(res, status, code, message) {
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
+        .end(JSON.stringify({ ok: false, error: { code, message } }));
+}
+
+/** 獲取測試譜面列表 GET /api/charts */
+async function handleListCharts(req, res) {
     try {
-        console.log('[Activity Server] 正在讀取譜面檔案...');
-        const chart = await loadChart();
-        console.log('[Activity Server] 譜面讀取成功:', chart.name);
-        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(chart));
+        const charts = await listCharts();
+        sendJsonSuccess(res, charts);
     } catch (e) {
-        console.error('[Activity Server] 讀取譜面失敗:', e);
-        res.writeHead(500, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: e.message || String(e) }));
+        sendJsonError(res, 500, 'INTERNAL_ERROR', e.message || String(e));
     }
 }
+
+/** 獲取測試譜面資料 GET /api/chart?file=... */
+async function handleGetChart(url, req, res) {
+    try {
+        const reqFile = url ? (url.searchParams.get('file') || url.searchParams.get('id')) : null;
+        const chart = await loadChart(reqFile);
+        sendJsonSuccess(res, chart);
+    } catch (e) {
+        console.error('[Activity Server] 讀取譜面失敗:', e);
+        sendJsonError(res, 404, 'NOT_FOUND', e.message || String(e));
+    }
+}
+
+// 直接執行此檔案時（如 node src/activity-server.js），獨立啟動 Activity 伺服器供開發預覽使用（無需登入 Discord Bot）
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+    startActivityServer(null, null);
+}
+

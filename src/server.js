@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const WEB_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
+const ENGINE_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine');
 
 const MIME = {
     '.html': 'text/html; charset=utf-8',
@@ -14,14 +14,14 @@ const MIME = {
     '.css': 'text/css; charset=utf-8',
 };
 
-/** 起一個只服務 web/ 目錄的靜態伺服器，回傳 { url, close }。 */
+/** 起一個只服務 engine/ 目錄的靜態伺服器，回傳 { url, close }。 */
 export async function startStaticServer() {
     const server = http.createServer(async (req, res) => {
         try {
             const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
             const safePath = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
-            const filePath = path.join(WEB_ROOT, safePath === '/' ? 'render.html' : safePath);
-            if (!filePath.startsWith(WEB_ROOT)) {
+            const filePath = path.join(ENGINE_ROOT, safePath === '/' ? 'headless-render.html' : safePath);
+            if (!filePath.startsWith(ENGINE_ROOT)) {
                 res.writeHead(403).end();
                 return;
             }
@@ -36,7 +36,7 @@ export async function startStaticServer() {
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address();
     return {
-        url: `http://127.0.0.1:${port}/render.html`,
+        url: `http://127.0.0.1:${port}/headless-render.html`,
         close: () => new Promise((r) => server.close(r)),
     };
 }

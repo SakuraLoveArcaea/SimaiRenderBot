@@ -269,7 +269,7 @@ async function buildRenderPayload(simaiText, opts = {}, footerExtra = '') {
         .setTitle('🎬 譜面預覽')
         .setColor(0x4A90E2)
         .addFields(
-            { name: '長度', value: `${result.duration.toFixed(1)} 秒`, inline: true },
+            { name: '長度', value: `${result.duration.toFixed(3)} 秒`, inline: true },
             { name: 'BPM', value: String(info.bpm ?? '—'), inline: true },
             { name: 'Notes', value: formatCounts(info.noteCounts), inline: true },
         )
@@ -511,7 +511,7 @@ async function handleChartCommand(interaction) {
         .setColor(0x9B59B6)
         .addFields(
             { name: 'combo 範圍', value: comboRange, inline: true },
-            { name: '時間範圍', value: `${start.toFixed(1)}s → ${end.toFixed(1)}s${clamped ? `（超過 ${MAX_DURATION} 秒上限，已截斷）` : ''}`, inline: true },
+            { name: '時間範圍', value: `${start.toFixed(3)}s → ${end.toFixed(3)}s${clamped ? `（超過 ${MAX_DURATION} 秒上限，已截斷）` : ''}`, inline: true },
             { name: '預估渲染', value: `約 ${etaSec} 秒`, inline: true },
             { name: '這段的譜面內容', value: '```\n' + clip(sliceSource(chart.text, info.indexToTime, start, end), 950) + '\n```' },
         )
