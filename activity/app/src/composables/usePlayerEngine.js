@@ -15,8 +15,8 @@ const defaultSettings = {
   effectDecayTime: 0.4,
   hanabiEffectDecayTime: 0.8,
   // 'hit'（預設）＝音符到判定線被擊打、出光環特效後消失
-  // 'through'  ＝tap / hold 不判定，維持原速穿過判定線往外飛，再於 noteEndFadeTime 內淡出
-  //              （star／touch／slide 不受影響，一律維持擊打行為）
+  // 'through'  ＝tap 不判定，維持原速穿過判定線往外飛，再於 noteEndFadeTime 內淡出
+  //              （hold／star／touch／slide 不受影響，一律維持擊打行為）
   // noteEndBehavior: 'hit',
   noteEndBehavior: 'through',
   noteEndFadeTime: 0.3, // 0.3
@@ -65,7 +65,9 @@ export function usePlayerEngine(chart) {
   let outlineImage = null;
   let nowIndexLocal = 0;
   let playScoreRes = { tap: 0, hold: 0, slide: 0, touch: 0, break: 0, score: 0, breakScore: 0, invScore: 0 };
+  let previewStart = null;
   let previewStop = null;
+  let previewLoop = false;
   let lastTs = 0;
   let size = 320;
   let cv = null;
@@ -141,13 +143,28 @@ export function usePlayerEngine(chart) {
   const hudMeasureFloat = computed(() => measureIndexFloat(realTime.value));
   const hudCombo = computed(() => currentComboIndex());
 
+  function fastForwardNowIndex(targetTime) {
+    const N = chart.N.value;
+    if (!N || N.length === 0) {
+      nowIndexLocal = 0;
+      return;
+    }
+    const idx = N.findIndex(n => n.time >= Math.max(0, targetTime - 2.0));
+    nowIndexLocal = idx === -1 ? N.length : idx;
+  }
+
   function seek(t) {
     const endTime = chart.DATA.value?.meta.endTime ?? 0;
     realTime.value = Math.max(0, Math.min(endTime, t));
     // Seek 時清空音效佇列，避免舊音效在新時間點爆出
     audioManager.soundQueue = [];
     audioManager.stopAllScheduledSounds();
-    draw(realTime.value);
+    if (realTime.value > 0) {
+      fastForwardNowIndex(realTime.value);
+    } else {
+      nowIndexLocal = 0;
+    }
+    draw(realTime.value, 0, true);
   }
 
   function seekComma(i) {
@@ -239,7 +256,7 @@ export function usePlayerEngine(chart) {
     resizeCanvas();
   }
 
-  function draw(t, dt = 0) {
+  function draw(t, dt = 0, isSeeking = false) {
     if (!renderer || !logic || !chart.DATA.value) return;
     const DATA = chart.DATA.value;
     const effectiveTime = Math.max(0, t + timeOffset.value);
@@ -253,7 +270,7 @@ export function usePlayerEngine(chart) {
       realTime: effectiveTime,
       musicDelay: 0,
       playing: playing.value,
-      timeControlSliding: dragging.value,
+      timeControlSliding: dragging.value || isSeeking,
       readyBeat: false,
       playedClock: [],
       settings: defaultSettings,
@@ -301,13 +318,21 @@ export function usePlayerEngine(chart) {
     realTime.value += dt * speed.value;
     const endTime = chart.DATA.value.meta.endTime;
     if (previewStop !== null && realTime.value >= previewStop) {
-      realTime.value = previewStop;
-      playing.value = false;
-      previewStop = null;
+      if (previewLoop) {
+        seek(previewStart !== null ? previewStart : 0);
+      } else {
+        realTime.value = previewStop;
+        playing.value = false;
+        previewStop = null;
+      }
     }
     if (realTime.value >= endTime) {
-      realTime.value = endTime;
-      playing.value = false;
+      if (previewLoop) {
+        seek(previewStart !== null ? previewStart : 0);
+      } else {
+        realTime.value = endTime;
+        playing.value = false;
+      }
     }
     draw(realTime.value, dt);
     audioManager.update(realTime.value);
@@ -317,14 +342,13 @@ export function usePlayerEngine(chart) {
   function unlockAudio() {
     audioManager.ensureContextSync();
     if (audioManager.ctx?.state === 'suspended') {
-      audioManager.ctx.resume().catch(() => {});
+      audioManager.ctx.resume().catch(() => { });
     }
   }
 
   function play() {
     if (playing.value) return;
     playing.value = true;
-    previewStop = null;
     unlockAudio();
     lastTs = performance.now();
     requestAnimationFrame(loop);
@@ -333,6 +357,8 @@ export function usePlayerEngine(chart) {
   function pause() {
     playing.value = false;
     previewStop = null;
+    previewStart = null;
+    previewLoop = false;
   }
 
   function togglePlay() {
@@ -341,6 +367,14 @@ export function usePlayerEngine(chart) {
 
   function setPreviewStop(t) {
     previewStop = t;
+    previewStart = 0;
+    previewLoop = false;
+  }
+
+  function setPreviewBounds(start, stop, isLoop = false) {
+    previewStart = start;
+    previewStop = stop;
+    previewLoop = isLoop;
   }
 
   function setSpeed(v) {
@@ -373,7 +407,7 @@ export function usePlayerEngine(chart) {
     seek, seekComma, jumpByTime, jumpToAdjacentNote,
     attachCanvas, detachCanvas, resizeCanvas,
     loadAssets, initEngine, resetPlaybackState,
-    play, pause, togglePlay, setPreviewStop,
+    play, pause, togglePlay, setPreviewStop, setPreviewBounds,
     setSpeed, setHs, setTimeOffset, adjustTimeOffset, resetTimeOffset, setDragging, unlockAudio,
     defaultSettings,
   };

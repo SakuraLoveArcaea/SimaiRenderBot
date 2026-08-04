@@ -1,4 +1,6 @@
 <script setup>
+import { onMounted, onUnmounted } from 'vue';
+
 const props = defineProps({
   chart: { type: Object, required: true },
   engine: { type: Object, required: true },
@@ -13,6 +15,7 @@ let lastTapB = 0;
 // 雙點：播放頭直接定位到該端點目前的位置。手機上的 dblclick 不可靠，自己用 pointerdown 判定
 function onTrackPointerDown(which) {
   if (props.disabled) return;
+  props.engine.setDragging(true); 
   props.rangeSel.setActiveEndpoint(which);
   const now = performance.now();
   const value = which === 'a' ? props.rangeSel.rangeAValue.value : props.rangeSel.rangeBValue.value;
@@ -24,6 +27,18 @@ function onTrackPointerDown(which) {
   }
   if (which === 'a') lastTapA = now; else lastTapB = now;
 }
+
+function onWindowPointerUp() {
+  props.engine.setDragging(false);
+}
+
+onMounted(() => {
+  window.addEventListener('pointerup', onWindowPointerUp);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('pointerup', onWindowPointerUp);
+});
 </script>
 
 <template>

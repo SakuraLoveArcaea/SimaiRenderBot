@@ -276,11 +276,11 @@ export class SimaiRenderer {
     // --- 判定線行為 ---
 
     /**
-     * settings.noteEndBehavior === 'through' 時 tap / hold 不被擊打：沒有擊打特效，
+     * settings.noteEndBehavior === 'through' 時 tap 不被擊打：沒有擊打特效，
      * 維持原本的速度繼續往外飛出判定線，再依 noteEndFadeTime 淡出。
      * 預設 'hit' 就是原本的行為（音符消失 + 光環特效）。
      *
-     * 只作用在 tap 與 hold。star（含 slide 頭）、touch、slide 軌道一律維持擊打行為。
+     * 只作用在 tap。hold、star（含 slide 頭）、touch、slide 軌道一律維持擊打行為。
      */
     get isPassThrough() {
         return this.settings.noteEndBehavior === 'through';
@@ -796,90 +796,73 @@ export class SimaiRenderer {
         // tailT <= 0 表示 hold 的尾端已經通過判定線
         const tailT = holdDuration + noteT;
 
-        if (tailT < 0 && !this.isPassThrough) {
+        if (tailT < 0) {
             this.ctx.save();
             this.ctx.translate(posInfo.x, posInfo.y);
             this.simpleHitEffect(tailT);
             this.ctx.restore();
-        } else {
-            // 穿透模式：整條 hold（頭尾）都不停在判定線，直接飛出去再淡出
-            let fadeAlpha = 1;
-            if (tailT < 0) {
-                fadeAlpha = this.passThroughAlpha(tailT);
-                if (fadeAlpha <= 0) return;
-            }
-            const isOn = !this.isPassThrough && (noteTime - this.globalTime) <= -0.1 && !isMine;
-            let br = (s.isBreak && !isMine) ? Math.pow(Math.sin(this.globalTime * -6), 2) * 0.5 : 0;
-            const holdImgKey = isOn ?
-                (isMine ? "hold_mine" : (isBreak ? "hold_break_on" : (isDouble ? "hold_each_on" : "hold_on"))) :
-                (isMine ? "hold_mine" : (isBreak ? "hold_break" : (isDouble ? "hold_each" : "hold")));
-            let img;
-            if (isBreak) {
-                this._tempColorConfig.colorCode = "#fff8a6";
-                img = this.getMemoizedTintedImage(holdImgKey, br, this._tempColorConfig);
-            } else {
-                img = this.images[holdImgKey];
-            }
-            const speedCoeff = this.settings.speed * 0.8833 + 0.8167;
-            const t1 = 1 - this.timeFunction((noteTime - this.globalTime + holdDuration) * speedCoeff);
-            // 穿透模式不把頭部夾在判定線上
-            const displayT = this.isPassThrough
-                ? Math.max(this.settings.middleDistance, t)
-                : Math.min(1, Math.max(this.settings.middleDistance, t));
-            const currentScale = t < this.settings.middleDistance ? Math.max(0, (t + 0.9) / (0.9 + this.settings.middleDistance)) : 1;
-            const size = this.settings.noteBaseSize * currentScale;
-            // 一般模式下頭部卡在判定線，長度用一組近似式夾出來。
-            // 穿透模式頭尾都會繼續往外跑，長度直接由頭 (t) 與尾 (t1) 的距離決定
-            // ——(1 - middleDistance) 的半徑差對應 2.45 的 sizeOffset，尾端還沒離開中央時以 middleDistance 為準。
-            const sizeOffset = t < this.settings.middleDistance ? 0 :
-                (this.isPassThrough ?
-                    Math.max(0, (t - Math.max(this.settings.middleDistance, t1)) * 2.45) :
-                    Math.min(tailT * 0.9 * speedCoeff,
-                        Math.min((1 - this.settings.middleDistance) * 2.45,
-                            Math.min((t - this.settings.middleDistance) * 2.45,
-                                holdDuration * 0.9 * speedCoeff))));
-
-            this.ctx.save();
-            const arcimg = this.images[isMine ? "MineArc" : (isBreak ? "BreakArc" : (isDouble ? "EachArc" : "NormalArc"))];
-            this.ctx.rotate(posInfo.rot);
-            this.ctx.globalAlpha = currentScale * fadeAlpha;
-            this.drawImgAtcenter(arcimg, displayT * innerCirleBase * 2.25);
-            this.ctx.restore();
-
-            if (t1 > this.settings.middleDistance) {
-                this.ctx.save();
-                this.ctx.globalAlpha = fadeAlpha;
-                const endimg = this.images[isMine ? "Hold_Mine_End" : (isBreak ? "Hold_Break_End" : (isDouble ? "Hold_Each_End" : "Hold_End"))];
-                this.ctx.translate(posInfo.x * t1, posInfo.y * t1);
-                this.drawImgAtcenter(endimg, size * 0.65);
-                this.ctx.restore();
-            }
-
-            this.ctx.save();
-            this.ctx.globalAlpha = fadeAlpha;
-            this.ctx.translate(posInfo.x * displayT, posInfo.y * displayT);
-            this.ctx.rotate(posInfo.rot);
-            this.ctx.drawImage(img, 0, 0, 122, 55, -size / 2, -size * 1.64 * 0.35, size, size * 1.64 * 0.275);
-            this.ctx.drawImage(img, 0, 55, 122, 90, -size / 2, -size * 1.64 * 0.0785, size, size * 1.64 * (0.17 + sizeOffset));
-            this.ctx.drawImage(img, 0, 145, 122, 55, -size / 2, size * 1.64 * (0.09 + sizeOffset), size, size * 1.64 * 0.275);
-
-            if (s.isEx) {
-                this._tempColorConfig.colorCode = isBreak ? this.exColor.break : (isDouble ? this.exColor.double : this.exColor.tap);
-                const ex = this.getMemoizedTintedImage("hold_ex", 0.6, this._tempColorConfig);
-                this.ctx.drawImage(ex, 0, 0, 122, 55, -size / 2, -size * 1.64 * 0.35, size, size * 1.64 * 0.275);
-                this.ctx.drawImage(ex, 0, 55, 122, 90, -size / 2, -size * 1.64 * 0.0785, size, size * 1.64 * (0.17 + sizeOffset));
-                this.ctx.drawImage(ex, 0, 145, 122, 55, -size / 2, size * 1.64 * (0.09 + sizeOffset), size, size * 1.64 * 0.275);
-            }
-            this.ctx.restore();
-
-            if (!this.isPassThrough) {
-                this.ctx.save();
-                this.ctx.translate(posInfo.x * displayT, posInfo.y * displayT);
-                this.simpleHitEffect(noteT);
-                if (isOn) this.simpleHoldEffect(noteT);
-                this.ctx.restore();
-            }
+            return;
         }
+
+        const isOn = (noteTime - this.globalTime) <= -0.1 && !isMine;
+        let br = (s.isBreak && !isMine) ? Math.pow(Math.sin(this.globalTime * -6), 2) * 0.5 : 0;
+        const holdImgKey = isOn ?
+            (isMine ? "hold_mine" : (isBreak ? "hold_break_on" : (isDouble ? "hold_each_on" : "hold_on"))) :
+            (isMine ? "hold_mine" : (isBreak ? "hold_break" : (isDouble ? "hold_each" : "hold")));
+        let img;
+        if (isBreak) {
+            this._tempColorConfig.colorCode = "#fff8a6";
+            img = this.getMemoizedTintedImage(holdImgKey, br, this._tempColorConfig);
+        } else {
+            img = this.images[holdImgKey];
+        }
+        const speedCoeff = this.settings.speed * 0.8833 + 0.8167;
+        const t1 = 1 - this.timeFunction((noteTime - this.globalTime + holdDuration) * speedCoeff);
+        const displayT = Math.min(1, Math.max(this.settings.middleDistance, t));
+        const currentScale = t < this.settings.middleDistance ? Math.max(0, (t + 0.9) / (0.9 + this.settings.middleDistance)) : 1;
+        const size = this.settings.noteBaseSize * currentScale;
+        const sizeOffset = t < this.settings.middleDistance ? 0 :
+            Math.min(tailT * 0.9 * speedCoeff,
+                Math.min((1 - this.settings.middleDistance) * 2.45,
+                    Math.min((t - this.settings.middleDistance) * 2.45,
+                        holdDuration * 0.9 * speedCoeff)));
+
+        this.ctx.save();
+        const arcimg = this.images[isMine ? "MineArc" : (isBreak ? "BreakArc" : (isDouble ? "EachArc" : "NormalArc"))];
+        this.ctx.rotate(posInfo.rot);
+        this.ctx.globalAlpha = currentScale;
+        this.drawImgAtcenter(arcimg, displayT * innerCirleBase * 2.25);
+        this.ctx.restore();
+
+        if (t1 > this.settings.middleDistance) {
+            this.ctx.save();
+            const endimg = this.images[isMine ? "Hold_Mine_End" : (isBreak ? "Hold_Break_End" : (isDouble ? "Hold_Each_End" : "Hold_End"))];
+            this.ctx.translate(posInfo.x * t1, posInfo.y * t1);
+            this.drawImgAtcenter(endimg, size * 0.65);
+            this.ctx.restore();
+        }
+
+        this.ctx.save();
+        this.ctx.translate(posInfo.x * displayT, posInfo.y * displayT);
+        this.ctx.rotate(posInfo.rot);
+        this.ctx.drawImage(img, 0, 0, 122, 55, -size / 2, -size * 1.64 * 0.35, size, size * 1.64 * 0.275);
+        this.ctx.drawImage(img, 0, 55, 122, 90, -size / 2, -size * 1.64 * 0.0785, size, size * 1.64 * (0.17 + sizeOffset));
+        this.ctx.drawImage(img, 0, 145, 122, 55, -size / 2, size * 1.64 * (0.09 + sizeOffset), size, size * 1.64 * 0.275);
+
+        if (s.isEx) {
+            this._tempColorConfig.colorCode = isBreak ? this.exColor.break : (isDouble ? this.exColor.double : this.exColor.tap);
+            const ex = this.getMemoizedTintedImage("hold_ex", 0.6, this._tempColorConfig);
+            this.ctx.drawImage(ex, 0, 0, 122, 55, -size / 2, -size * 1.64 * 0.35, size, size * 1.64 * 0.275);
+            this.ctx.drawImage(ex, 0, 55, 122, 90, -size / 2, -size * 1.64 * 0.0785, size, size * 1.64 * (0.17 + sizeOffset));
+            this.ctx.drawImage(ex, 0, 145, 122, 55, -size / 2, size * 1.64 * (0.09 + sizeOffset), size, size * 1.64 * 0.275);
+        }
+        this.ctx.restore();
+
+        this.ctx.save();
+        this.ctx.translate(posInfo.x * displayT, posInfo.y * displayT);
+        this.simpleHitEffect(noteT);
+        if (isOn) this.simpleHoldEffect(noteT);
+        this.ctx.restore();
     }
 
     getTouchHanabi(s) {

@@ -157,6 +157,32 @@
             const frameCount = Math.max(1, Math.ceil((renderEnd - renderStart) * fps));
             let nowIndexLocal = 0;
 
+            // 若 renderStart > 0（例如秒數剪輯模式 cleanCut: false），先在幕後模擬推進至 renderStart，
+            // 確保 nowIndexLocal、_buckets 與 note 狀態正確追上 renderStart 時間點
+            if (renderStart > 0) {
+                const warmupStep = 1 / 60;
+                for (let simT = 0; simT < renderStart; simT += warmupStep) {
+                    const { nowIndex: updatedIndex } = logic.get({
+                        renderer,
+                        globalTime: simT,
+                        realTime: simT,
+                        musicDelay: 0,
+                        playing: false,
+                        timeControlSliding: false,
+                        readyBeat: false,
+                        playedClock: [],
+                        settings,
+                        visualHeight: 0,
+                        notes,
+                        decodedTags: decoded.tags || [],
+                        playScoreRes,
+                        nowIndex: nowIndexLocal,
+                        skipAudioQueue: true,
+                    });
+                    nowIndexLocal = updatedIndex;
+                }
+            }
+
             window.__renderProgress = 0;
 
             for (let i = 0; i < frameCount; i++) {
