@@ -8,15 +8,21 @@
     "render": "node src/cli.js",
     "bot": "node src/bot.js",
     "register": "node src/register-commands.js",
-    "build:activity": "esbuild activity/main.js --bundle --format=esm --outfile=activity/public/dist/main.js",
+    "dev:activity": "vite dev --config activity/app/vite.config.js",
+    "server:activity": "node src/activity-server.js",
+    "build:activity": "vite build --config activity/app/vite.config.js",
+    "test:activity": "node activity/app/smoke-test.mjs",
+    "test:activity:webkit": "BROWSER_ENGINE=webkit node activity/app/smoke-test.mjs",
     "tunnel": "cloudflared tunnel --url http://localhost:3000"
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^1.8.1",
     "discord.js": "^14.27.0",
-    "playwright-core": "^1.49.0"
+    "playwright-core": "^1.49.0",
+    "vue": "^3.5.40"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0"
+    "@vitejs/plugin-vue": "^6.0.8",
+    "vite": "^8.1.5"
   }
 }
