@@ -457,10 +457,7 @@ onUnmounted(() => {
           <div class="dual-player-row">
             <div class="player-stage-card">
               <div class="player-stage-badge l">
-                <div class="badge-player-title">
-                  <span>🔷 1P (L)</span>
-                  <button class="btn-badge-mirror" title="切換 1P 鏡像" @click="onCycleMirrorL">🔄 {{ chart.mirrorLabel.value }}</button>
-                </div>
+                <span>🔷 1P (L)</span>
                 <span class="player-combo-val">Combo <b>{{ engine.hudCombo.value }}</b> / {{ hudComboMax }}</span>
               </div>
               <div class="stage-container">
@@ -470,10 +467,7 @@ onUnmounted(() => {
 
             <div class="player-stage-card">
               <div class="player-stage-badge r">
-                <div class="badge-player-title">
-                  <span>🌸 2P (R)</span>
-                  <button class="btn-badge-mirror" title="切換 2P 鏡像" @click="onCycleMirrorR">🔄 {{ chartR.mirrorLabel.value }}</button>
-                </div>
+                <span>🌸 2P (R)</span>
                 <span class="player-combo-val">Combo <b>{{ engine.hudComboR.value }}</b> / {{ hudComboMaxR }}</span>
               </div>
               <div class="stage-container">
