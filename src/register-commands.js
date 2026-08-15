@@ -58,9 +58,21 @@ export const commands = [
             .setDescription('在文字頻道啟動互動 Activity 頁面')
             .addStringOption((o) => o
                 .setName('chart')
-                .setDescription('指定要開啟的譜面（可輸入關鍵字搜尋）')
+                .setDescription('指定要開啟的曲目（可輸入關鍵字搜尋）')
                 .setAutocomplete(true)
-                .setRequired(false)),
+                .setRequired(false))
+            .addStringOption((o) => o
+                .setName('difficulty')
+                .setDescription('譜面難度（預設 MASTER）')
+                .setRequired(false)
+                .addChoices(
+                    { name: 'MASTER（預設）', value: 'master' },
+                    { name: 'Re:MASTER', value: 're_master' },
+                    { name: 'EXPERT', value: 'expert' },
+                    { name: 'ADVANCED', value: 'advanced' },
+                    { name: 'BASIC', value: 'basic' },
+                    { name: '宴 (Utage)', value: 'utage' },
+                )),
     ] : []),
     // 右鍵訊息 → Apps → 渲染譜面：抓訊息裡的 ```simai code block 來渲染
     new ContextMenuCommandBuilder()

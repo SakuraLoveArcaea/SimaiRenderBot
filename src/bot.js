@@ -64,23 +64,19 @@ client.on('interactionCreate', async (interaction) => {
                 const focusedValue = (interaction.options.getFocused() || '').toLowerCase();
                 const songs = await listCharts();
                 const matchedSongs = songs
-                    .filter((s) => s.title.toLowerCase().includes(focusedValue) || (s.artist && s.artist.toLowerCase().includes(focusedValue)) || s.id.toLowerCase().includes(focusedValue));
+                    .filter((s) => s.title.toLowerCase().includes(focusedValue) || (s.artist && s.artist.toLowerCase().includes(focusedValue)) || s.id.toLowerCase().includes(focusedValue))
+                    .slice(0, 25);
                 
-                const choices = [];
-                for (const s of matchedSongs) {
-                    const diffs = s.availableDifficulties || ['master'];
-                    for (const d of diffs) {
-                        const lv = s.levels?.[d] ? ` ${s.levels[d]}` : '';
-                        const dName = d === 're_master' ? 'Re:MAS' : d === 'utage' ? '宴' : d.toUpperCase();
-                        choices.push({
-                            name: `[${dName}${lv}] ${s.title}`.slice(0, 100),
-                            value: `${s.id}:${d}`,
-                        });
-                        if (choices.length >= 25) break;
-                    }
-                    if (choices.length >= 25) break;
-                }
-                return await interaction.respond(choices.slice(0, 25));
+                return await interaction.respond(
+                    matchedSongs.map((s) => {
+                        const artistStr = s.artist ? ` [${s.artist}]` : '';
+                        const bpmStr = s.bpm ? ` (${s.bpm} BPM)` : '';
+                        return {
+                            name: `${s.title}${artistStr}${bpmStr}`.slice(0, 100),
+                            value: s.id,
+                        };
+                    })
+                );
             }
             return;
         }
@@ -477,11 +473,13 @@ function isFresh(draft) {
 // ============================================================
 const CHART_RENDER_BTN = 'chart:render';
 /**
- * /play 指令：若有指定 chart 參數，先存入 resume session，再開啟 Activity 讓前端載入對應譜面
+ * /play 指令：可指定 chart (曲名) 與 difficulty (難度，預設 master)，存入 resume session 後開啟 Activity
  */
 async function handlePlayCommand(interaction) {
-    const chartId = interaction.options.getString('chart');
-    if (chartId) {
+    const rawChart = interaction.options.getString('chart');
+    const difficulty = interaction.options.getString('difficulty') || 'master';
+    if (rawChart) {
+        const chartId = rawChart.includes(':') ? rawChart : `${rawChart}:${difficulty}`;
         saveResumeSession(interaction.user.id, { chartId });
     }
     await interaction.launchActivity();
