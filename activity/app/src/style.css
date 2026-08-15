@@ -574,10 +574,17 @@ header .sub {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
   flex: 0 0 auto;
-  padding: 4px 0;
+  padding: 6px 10px;
+  background: rgba(14, 14, 30, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .dual-player-controls-bottom button {
@@ -585,33 +592,56 @@ header .sub {
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 12px;
+  padding: 7px 4px;
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
-  min-width: 44px;
+  flex: 1 1 0;
+  min-width: 32px;
+  max-width: 56px;
   text-align: center;
   white-space: nowrap;
-  transition: all .12s;
+  transition: all .12s ease;
   touch-action: manipulation;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
 }
 
 .dual-player-controls-bottom button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
   border-color: var(--slide);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.dual-player-controls-bottom button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.dual-player-controls-bottom button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .dual-player-controls-bottom .btn-play-large {
-  background: linear-gradient(135deg, #ff4fa5, #7b2cbf);
-  border: none;
+  background: linear-gradient(135deg, #38c8ff 0%, #ff4fa5 100%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   color: #fff;
   font-weight: 700;
-  padding: 8px 24px;
-  font-size: 13px;
-  box-shadow: 0 4px 14px rgba(255, 79, 165, 0.35);
+  padding: 7px 12px;
+  font-size: 12px;
+  flex: 2 1 0;
+  min-width: 76px;
+  max-width: 120px;
+  box-shadow: 0 3px 12px rgba(255, 79, 165, 0.35);
+  letter-spacing: 0.02em;
 }
 
 .dual-player-controls-bottom .btn-play-large:hover:not(:disabled) {
-  filter: brightness(1.1);
+  filter: brightness(1.15);
+  box-shadow: 0 4px 18px rgba(56, 200, 255, 0.45);
   transform: translateY(-1px);
 }
 
@@ -2013,13 +2043,27 @@ header .sub {
     border-radius: 12px;
   }
   header h1 {
-    font-size: 16px;
+    font-size: 14px;
   }
   #timeline {
     padding: 8px 10px;
   }
   #rangeEnds, #rangeActions {
     gap: 4px;
+  }
+  .dual-player-controls-bottom {
+    gap: 3px;
+    padding: 4px 6px;
+  }
+  .dual-player-controls-bottom button {
+    padding: 5px 2px;
+    font-size: 10px;
+    min-width: 26px;
+  }
+  .dual-player-controls-bottom .btn-play-large {
+    font-size: 11px;
+    padding: 5px 8px;
+    min-width: 64px;
   }
 }
 
