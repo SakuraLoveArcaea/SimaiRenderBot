@@ -4,16 +4,17 @@
  */
 
 export const DIFFICULTY_KEYS = {
-  1: 'basic',
-  2: 'advanced',
-  3: 'expert',
-  4: 'master',
-  5: 're_master',
-  6: 'utage',
+  1: 'easy',
+  2: 'basic',
+  3: 'advanced',
+  4: 'expert',
+  5: 'master',
+  6: 're_master',
   7: 'utage',
 };
 
 export const DIFFICULTY_LABELS = {
+  easy: 'EASY',
   basic: 'BASIC',
   advanced: 'ADVANCED',
   expert: 'EXPERT',

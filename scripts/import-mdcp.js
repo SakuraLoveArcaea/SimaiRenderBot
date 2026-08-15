@@ -7,12 +7,12 @@ const MDCP_ROOT = '/Users/lvjiayao/Downloads/mdcp';
 const OUTPUT_DIR = path.resolve(__dirname, '../testChart');
 
 const DIFF_NAMES = {
-  inote_1: 'basic',
-  inote_2: 'advanced',
-  inote_3: 'expert',
-  inote_4: 'master',
-  inote_5: 're_master',
-  inote_6: 'utage',
+  inote_1: 'easy',
+  inote_2: 'basic',
+  inote_3: 'advanced',
+  inote_4: 'expert',
+  inote_5: 'master',
+  inote_6: 're_master',
   inote_7: 'utage',
 };
 
