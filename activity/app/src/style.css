@@ -316,6 +316,16 @@ header h1 {
   color: #fff;
 }
 
+.chart-diff-badge-btn.utage_l {
+  background: #0984e3;
+  color: #fff;
+}
+
+.chart-diff-badge-btn.utage_r {
+  background: #e84393;
+  color: #fff;
+}
+
 .chart-item-empty {
   padding: 16px;
   text-align: center;

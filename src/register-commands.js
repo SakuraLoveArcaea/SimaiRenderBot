@@ -72,6 +72,8 @@ export const commands = [
                     { name: 'ADVANCED', value: 'advanced' },
                     { name: 'BASIC', value: 'basic' },
                     { name: '宴 (Utage)', value: 'utage' },
+                    { name: '宴 (L / 1P)', value: 'utage_l' },
+                    { name: '宴 (R / 2P)', value: 'utage_r' },
                 )),
     ] : []),
     // 右鍵訊息 → Apps → 渲染譜面：抓訊息裡的 ```simai code block 來渲染

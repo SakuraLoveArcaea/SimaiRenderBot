@@ -21,6 +21,8 @@ export const DIFFICULTY_LABELS = {
   master: 'MASTER',
   re_master: 'Re:MASTER',
   utage: '宴',
+  utage_l: 'L',
+  utage_r: 'R',
 };
 
 /**
@@ -62,11 +64,32 @@ export function parseMaidata(content, fallbackId = '') {
   const genre = meta.genre || '';
   const version = meta.version || 'maimai DX CiRCLE';
 
+  // 判斷是否為 宴會場協同譜面（如 [奏]、[充] 雙人譜面：inote_2 為 L, inote_3 為 R）
+  const isUtageSong = genre === '宴会場' || title.includes('[宴]') || title.includes('【宴】');
+  if (isUtageSong && (inotes['basic'] || inotes['advanced']) && !inotes['master'] && !inotes['expert']) {
+    if (inotes['basic']) {
+      inotes['utage_l'] = inotes['basic'];
+      levels['utage_l'] = levels['basic'] || '';
+      designers['utage_l'] = designers['basic'] || '';
+      delete inotes['basic'];
+      delete levels['basic'];
+      delete designers['basic'];
+    }
+    if (inotes['advanced']) {
+      inotes['utage_r'] = inotes['advanced'];
+      levels['utage_r'] = levels['advanced'] || '';
+      designers['utage_r'] = designers['advanced'] || '';
+      delete inotes['advanced'];
+      delete levels['advanced'];
+      delete designers['advanced'];
+    }
+  }
+
   // 整理所有有譜面內容的難度
   const availableDifficulties = Object.keys(inotes).filter(k => inotes[k] && inotes[k].length > 10);
 
-  // 排序難度順序 (basic -> advanced -> expert -> master -> re_master -> utage)
-  const diffOrder = ['basic', 'advanced', 'expert', 'master', 're_master', 'utage'];
+  // 排序難度順序
+  const diffOrder = ['basic', 'advanced', 'expert', 'master', 're_master', 'utage', 'utage_l', 'utage_r', 'easy'];
   availableDifficulties.sort((a, b) => diffOrder.indexOf(a) - diffOrder.indexOf(b));
 
   return {
@@ -110,12 +133,24 @@ function saveField(key, value, { meta, inotes, levels, designers }) {
 export function buildSimaiFromSong(song, requestedDiff = null) {
   if (!song || !song.inotes) throw new Error('無效的歌曲物件');
 
-  // 若未指定難度，優先選 master -> re_master -> expert -> 第一個可用難度
+  // 正規化難度別名
   let diff = requestedDiff;
+  if (diff) {
+    diff = diff.toLowerCase();
+    if (diff === 'l' || diff === '1p') diff = 'utage_l';
+    if (diff === 'r' || diff === '2p') diff = 'utage_r';
+    if (diff === 'utage' && !song.inotes['utage']) {
+      if (song.inotes['utage_l']) diff = 'utage_l';
+    }
+  }
+
+  // 若未指定或該難度不存在，依預設優先序選取
   if (!diff || !song.inotes[diff]) {
     if (song.inotes['master']) diff = 'master';
     else if (song.inotes['re_master']) diff = 're_master';
     else if (song.inotes['expert']) diff = 'expert';
+    else if (song.inotes['utage']) diff = 'utage';
+    else if (song.inotes['utage_l']) diff = 'utage_l';
     else diff = song.availableDifficulties[0];
   }
 

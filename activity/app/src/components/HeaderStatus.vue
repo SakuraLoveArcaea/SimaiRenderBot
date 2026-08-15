@@ -125,7 +125,7 @@ const filteredCharts = computed(() => {
                 :title="`載入 ${d.toUpperCase()}`"
                 @click="handleSelect(`${c.id}:${d}`)"
               >
-                {{ d === 're_master' ? 'Re' : d === 'utage' ? '宴' : d.slice(0, 3).toUpperCase() }}{{ c.levels?.[d] ? ` ${c.levels[d]}` : '' }}
+                {{ d === 're_master' ? 'Re' : d === 'utage' ? '宴' : d === 'utage_l' ? 'L' : d === 'utage_r' ? 'R' : d.slice(0, 3).toUpperCase() }}{{ c.levels?.[d] ? ` ${c.levels[d]}` : '' }}
               </button>
             </div>
           </div>
