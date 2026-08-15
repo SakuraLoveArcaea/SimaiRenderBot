@@ -197,28 +197,14 @@ SimaiRenderBot/
 
 ---
 
-## 🛠️ 開發歷程與技術踩坑記錄 (Engineering Notes & Bug Fixes)
+## 💖 致謝與鳴謝 (Credits & Acknowledgments)
 
-本專案在開發與整合過程中所克服的代表性技術難點：
-
-### 1. ⚠️ Discord 按鈕 `customId` 100 字元長度限制
-* **問題現象**：當渲染超長曲名（例如 `False Amber (...)` 或日文宴譜）時，若直接將完整 `chartId` 與逗號區間編碼進按鈕的 `customId`（如 `resume:False_Amber_%28...%29:641:841`），字串長度會達到 170+ 字元，觸發 Discord API 的 `Invalid string length (expected.length <= 100)` 報錯。
-* **解決方案**：在 `src/resume.js` 中建立 **短 Token 狀態暫存池**。按鈕生成時僅寫入 8 碼隨機 Token（如 `resume:a8f3b9c1`），使用者點擊時由 Bot 依 Token 取回曲目與區間並綁定至該使用者的 Session，徹底解決按鈕長度溢出問題。
-
-### 2. 🎯 複合 Slide 與中間段的 Combo 計算誤差
-* **問題現象**：直接使用 simai 解析後的 Tokens 陣列長度作為 Combo 上限，會將複合 Slide 的多個轉折段（`!lastSlide`）與地雷（`isMine`）誤算入 Combo，導致 HUD 顯示的數值與實際音符判定不一致。
-* **解決方案**：在 `useChartData` 中建立精確的 `comboTimes` 時間序列，只保留 Tap、Touch、Hold 以及 Slide 的結尾時間點，使前端播放器、區間選取器與後端渲染引擎的 Combo 判定 100% 同步。
-
-### 3. 🎨 雙人譜面並排渲染時的圓形框體重疊問題
-* **問題現象**：在 16:9（960×540）畫面中並排 1P (L) 與 2P (R) 兩個圓形機台時，若使用單一 Canvas 配合平移轉換繪製，中間的判定圈與外框線條會互相遮擋干擾。
-* **解決方案**：在 `engine/headless-render.html` 中改採 **雙獨立離屏畫布 (Offscreen Canvas)** 機制，1P 與 2P 各自於 `480×540` 的獨立緩衝區中完成完整圖層繪製與清除，最後再無縫貼圖合成至 960×540 主輸出畫布。
-
-### 4. ⏱️ 初始載入全選過長問題
-* **問題現象**：新開啟曲目時若預設選取整首（0 到 maxComma），往往超過 30 秒上限並觸發警告。
-* **解決方案**：在 `initBounds` 導入動態時間計算，載入新歌或點擊 `[⏮ 設為起點]` 時，自動計算起點後約 **8 ~ 10 秒** 的黃金範圍作為預設終點。
+* **上游開源專案**：本專案的 maimai 網頁渲染核心源自於 [Susuy0725/web-mai-chart-x](https://github.com/Susuy0725/web-mai-chart-x)，在此基礎上進行架構重構與功能擴展（包含 Utage 雙人協同播放、16:9 雙機台並排渲染、滿版響應式介面、Discord Activity / Bot 深度整合、小節剪輯與短 Token 續看狀態流等）。特別感謝原作者 **Susuy0725** 開發並貢獻的網頁版播放核心！
 
 ---
 
-## 📄 授權條款 (License)
+## ⚖️ 免責與版權聲明 (Disclaimer & Copyright)
 
-本專案採用 **MIT License** 授權開源。
+* 本專案為社群開源之非官方愛好者作品，僅供 maimai 玩家與音遊社群作為**譜面配置研究、慢速練習與技術交流**使用，**嚴禁用於任何商業或營利目的**。
+* **maimai (でらっくす)** 遊戲相關之所有商標、美術素材、音效、譜面資料及相關智慧財產權均屬 **SEGA Corporation** 所有。
+* 若相關版權方有任何疑慮，請透過 Issue 或 Pull Request 與我們聯繫，我們將會儘速配合調整。
