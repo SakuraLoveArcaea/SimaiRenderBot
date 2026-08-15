@@ -167,9 +167,21 @@ export function useChartData() {
     return mirrorMode.value;
   }
 
+  function clear() {
+    chartText.value = '';
+    originalText.value = '';
+    chartName.value = '';
+    DATA.value = null;
+    M.value = [];
+    N.value = [];
+    D.value = [];
+    C.value = [];
+    commaParts.value = [];
+  }
+
   return {
     chartText, originalText, chartName, DATA, M, N, D, C, commaParts,
     mirrorMode, mirrorLabel, cycleMirror,
-    loadChart, loadFromText, adoptFrom,
+    loadChart, loadFromText, adoptFrom, clear,
   };
 }

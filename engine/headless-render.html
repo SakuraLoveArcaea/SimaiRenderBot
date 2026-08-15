@@ -25,14 +25,13 @@
 <body>
     <!-- helper.js 模組頂層會找這個元素，給它一個隱藏的替身 -->
     <div id="canvasContainer" style="display:none"></div>
-    <canvas id="stage" width="720" height="720"></canvas>
+    <canvas id="stage" width="960" height="540"></canvas>
 
     <script type="module">
         import { simaiDecode, warns, warnpos } from './Scripts/decode.js';
         import { loadAllImages, SimaiLogicControler, scaleBase } from './Scripts/helper.js';
         import { SimaiRenderer } from './Scripts/renderer.js';
 
-        // 與主程式 defaultSettings 相同的渲染相關子集
         const defaultSettings = {
             speed: 6.5,
             touchSpeed: 7,
@@ -45,27 +44,21 @@
             middleDistance: 0.25,
             effectDecayTime: 0.4,
             hanabiEffectDecayTime: 0.8,
-            // 'hit'（預設）＝音符到判定線被擊打、出光環特效後消失
-            // 'through'  ＝tap / hold 不判定，維持原速穿過判定線往外飛，再於 noteEndFadeTime 內淡出
-            //              （star／touch／slide 不受影響，一律維持擊打行為）
             noteEndBehavior: 'hit',
             noteEndFadeTime: 0.3,
             noteBaseSize: 11,
             maxSlideCount: 500,
-            // 譜面周圍的輔助文字（時間、DELUXE Rate、各類 note 計數、Powered by）不畫，
-            // 片段資訊改由 Discord 訊息的 embed 呈現
             renderSurroundingAuxiliaryText: false,
             slideIllegalRed: false,
             showUI: false,
             notPlayHoldEnd: false,
-            backgroundColor: '#000',
+            backgroundColor: '#0c0c1e',
             sfxVolumes: {},
         };
 
         let imagesPromise = null;
         const getImages = () => (imagesPromise ??= loadAllImages());
 
-        // 只解析不渲染，讓 Node 端可以先做語法檢查 / 長度預估
         window.inspectChart = (simaiText) => {
             const result = simaiDecode(simaiText, true);
             return {
@@ -77,8 +70,6 @@
             };
         };
 
-        // /chart 用：每個 combo 的判定時間（升冪）。頭部類（tap/hold/touch/star）以出現時間計、
-        // slide 以最後一段的尾端判定計、地雷不算 combo——近似遊戲內的 combo 計數，拿來定位起點夠用。
         window.chartComboInfo = (simaiText) => {
             const d = simaiDecode(simaiText, true);
             const times = [];
@@ -96,34 +87,39 @@
                 endTime: d.endTime ?? 0,
                 bpm: d.bpm ?? null,
                 indexToTime: [...(d.indexToTime || [])].map((t) => t ?? null),
-                // 切出片段時要用來還原開頭的 (BPM) 與 {分音}
                 tags: (d.tags || [])
                     .filter((t) => t.type === 'bpm' || t.type === 'split')
                     .map((t) => ({ type: t.type, value: t.value, time: t.time })),
             };
         };
 
-        // 核心：simai 文字 → 逐幀渲染，每幀以 PNG(base64) 透過 __emitFrame 串回 Node，
-        // 由 Node 端直接餵給 ffmpeg 轉 GIF。相較舊版跳過了 WebCodecs 的 H.264 編碼（Node 端也省了解碼），
-        // 中間那一趟編碼/解碼對最終 GIF 畫質毫無幫助（畫質由調色盤量化決定），純屬浪費。
         window.renderChartToFrames = async (simaiText, opts = {}) => {
             const {
-                width = 480,
-                height = 480,
-                fps = 15,              // 直接以 GIF 輸出 fps 渲染，不再畫 30fps 再丟一半
-                start = 0,             // 秒，相對於譜面時間軸
-                end = null,            // 秒，null = 譜面結尾
-                tail = 0.6,            // 結尾多渲染一點，讓最後的判定特效跑完
-                maxDuration = 60,      // 安全上限
+                width = 960,
+                height = 540,
+                fps = 15,
+                start = 0,
+                end = null,
+                tail = 0.6,
+                maxDuration = 60,
                 settingsOverride = {},
+                isDual = false,
+                simaiTextR = null,
             } = opts;
 
             const settings = { ...defaultSettings, ...settingsOverride };
-            const decoded = simaiDecode(simaiText, true);
-            const notes = decoded.notes || [];
-            if (!notes.length) throw new Error('EMPTY_CHART: 解析後沒有任何 note，請檢查 simai 語法');
+            const decodedL = simaiDecode(simaiText, true);
+            const notesL = decodedL.notes || [];
+            if (!notesL.length) throw new Error('EMPTY_CHART: 1P 解析後沒有任何 note');
 
-            const chartEnd = decoded.endTime ?? 0;
+            let decodedR = null;
+            let notesR = [];
+            if (isDual && simaiTextR) {
+                decodedR = simaiDecode(simaiTextR, true);
+                notesR = decodedR.notes || [];
+            }
+
+            const chartEnd = Math.max(decodedL.endTime ?? 0, decodedR?.endTime ?? 0);
             const renderStart = Math.max(0, start);
             let renderEnd = (end ?? chartEnd) + tail;
             if (renderEnd <= renderStart) throw new Error('BAD_RANGE: 結束時間需大於開始時間');
@@ -132,18 +128,6 @@
             const images = await getImages();
             await document.fonts.ready;
 
-            const off = document.createElement('canvas');
-            off.width = width;
-            off.height = height;
-            const offCtx = off.getContext('2d');
-
-            const renderer = new SimaiRenderer(off, settings);
-            renderer.setImages(images);
-            renderer.setContext(offCtx);
-
-            const p = Math.min(width, height) / scaleBase * renderer.scale;
-            offCtx.setTransform(p, 0, 0, p, width / 2, height / 2);
-
             const outlineImage = images['outline'] ?? await (async () => {
                 try {
                     const blob = await (await fetch('./Skin/outline.png')).blob();
@@ -151,21 +135,101 @@
                 } catch { return null; }
             })();
 
-            const logic = new SimaiLogicControler();
-            const playScoreRes = { tap: 0, hold: 0, slide: 0, touch: 0, break: 0, score: 0, breakScore: 0, invScore: 0 };
+            // 主合成畫布 (16:9)
+            const off = document.createElement('canvas');
+            off.width = width;
+            off.height = height;
+            const offCtx = off.getContext('2d');
+
             const step = 1 / fps;
             const frameCount = Math.max(1, Math.ceil((renderEnd - renderStart) * fps));
-            let nowIndexLocal = 0;
+            window.__renderProgress = 0;
 
-            // 若 renderStart > 0（例如秒數剪輯模式 cleanCut: false），先在幕後模擬推進至 renderStart，
-            // 確保 nowIndexLocal、_buckets 與 note 狀態正確追上 renderStart 時間點
-            if (renderStart > 0) {
-                const warmupStep = 1 / 60;
-                for (let simT = 0; simT < renderStart; simT += warmupStep) {
-                    const { nowIndex: updatedIndex } = logic.get({
-                        renderer,
-                        globalTime: simT,
-                        realTime: simT,
+            if (isDual) {
+                // ================= 雙人並排模式 (Dual Side-by-Side) =================
+                const halfW = Math.floor(width / 2); // 480
+                const stageH = height; // 540
+
+                // 獨立 1P 畫布與渲染器
+                const offL = document.createElement('canvas');
+                offL.width = halfW;
+                offL.height = stageH;
+                const offCtxL = offL.getContext('2d');
+                const rendererL = new SimaiRenderer(offL, settings);
+                rendererL.setImages(images);
+                rendererL.setContext(offCtxL);
+
+                // 獨立 2P 畫布與渲染器
+                const offR = document.createElement('canvas');
+                offR.width = halfW;
+                offR.height = stageH;
+                const offCtxR = offR.getContext('2d');
+                const rendererR = new SimaiRenderer(offR, settings);
+                rendererR.setImages(images);
+                rendererR.setContext(offCtxR);
+
+                const pDual = Math.min(halfW, stageH) / scaleBase * rendererL.scale;
+                offCtxL.setTransform(pDual, 0, 0, pDual, halfW / 2, stageH / 2);
+                offCtxR.setTransform(pDual, 0, 0, pDual, halfW / 2, stageH / 2);
+
+                const logicL = new SimaiLogicControler();
+                const logicR = new SimaiLogicControler();
+                const playScoreResL = { tap: 0, hold: 0, slide: 0, touch: 0, break: 0, score: 0, breakScore: 0, invScore: 0 };
+                const playScoreResR = { tap: 0, hold: 0, slide: 0, touch: 0, break: 0, score: 0, breakScore: 0, invScore: 0 };
+                let nowIndexL = 0;
+                let nowIndexR = 0;
+
+                if (renderStart > 0) {
+                    const warmupStep = 1 / 60;
+                    for (let simT = 0; simT < renderStart; simT += warmupStep) {
+                        const resL = logicL.get({
+                            renderer: rendererL,
+                            globalTime: simT,
+                            realTime: simT,
+                            musicDelay: 0,
+                            playing: false,
+                            timeControlSliding: false,
+                            readyBeat: false,
+                            playedClock: [],
+                            settings,
+                            visualHeight: 0,
+                            notes: notesL,
+                            decodedTags: decodedL.tags || [],
+                            playScoreRes: playScoreResL,
+                            nowIndex: nowIndexL,
+                            skipAudioQueue: true,
+                        });
+                        nowIndexL = resL.nowIndex;
+
+                        const resR = logicR.get({
+                            renderer: rendererR,
+                            globalTime: simT,
+                            realTime: simT,
+                            musicDelay: 0,
+                            playing: false,
+                            timeControlSliding: false,
+                            readyBeat: false,
+                            playedClock: [],
+                            settings,
+                            visualHeight: 0,
+                            notes: notesR,
+                            decodedTags: decodedR.tags || [],
+                            playScoreRes: playScoreResR,
+                            nowIndex: nowIndexR,
+                            skipAudioQueue: true,
+                        });
+                        nowIndexR = resR.nowIndex;
+                    }
+                }
+
+                for (let i = 0; i < frameCount; i++) {
+                    const t = renderStart + i * step;
+
+                    // 1P 邏輯
+                    const dataL = logicL.get({
+                        renderer: rendererL,
+                        globalTime: t,
+                        realTime: t,
                         musicDelay: 0,
                         playing: false,
                         timeControlSliding: false,
@@ -173,74 +237,221 @@
                         playedClock: [],
                         settings,
                         visualHeight: 0,
-                        notes,
-                        decodedTags: decoded.tags || [],
-                        playScoreRes,
-                        nowIndex: nowIndexLocal,
+                        notes: notesL,
+                        decodedTags: decodedL.tags || [],
+                        playScoreRes: playScoreResL,
+                        nowIndex: nowIndexL,
                         skipAudioQueue: true,
                     });
-                    nowIndexLocal = updatedIndex;
+                    nowIndexL = dataL.nowIndex;
+
+                    // 2P 邏輯
+                    const dataR = logicR.get({
+                        renderer: rendererR,
+                        globalTime: t,
+                        realTime: t,
+                        musicDelay: 0,
+                        playing: false,
+                        timeControlSliding: false,
+                        readyBeat: false,
+                        playedClock: [],
+                        settings,
+                        visualHeight: 0,
+                        notes: notesR,
+                        decodedTags: decodedR.tags || [],
+                        playScoreRes: playScoreResR,
+                        nowIndex: nowIndexR,
+                        skipAudioQueue: true,
+                    });
+                    nowIndexR = dataR.nowIndex;
+
+                    // 1P 清底與繪製
+                    offCtxL.save();
+                    offCtxL.setTransform(1, 0, 0, 1, 0, 0);
+                    offCtxL.fillStyle = settings.backgroundColor;
+                    offCtxL.fillRect(0, 0, halfW, stageH);
+                    if (outlineImage) {
+                        offCtxL.setTransform(pDual, 0, 0, pDual, halfW / 2, stageH / 2);
+                        offCtxL.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
+                    }
+                    offCtxL.restore();
+
+                    rendererL.drawFrame({
+                        globalTime: t,
+                        buckets: dataL.buckets,
+                        dt: step,
+                        showSensor: settings.showSensor,
+                        showSensorText: false,
+                        playCombo: dataL.playCombo,
+                        playScore: dataL.playScore,
+                        nowIndex: nowIndexL,
+                        skipClear: true,
+                        noteQuantity: dataL.noteQuantity,
+                        playScoreRes: playScoreResL,
+                    });
+
+                    // 2P 清底與繪製
+                    offCtxR.save();
+                    offCtxR.setTransform(1, 0, 0, 1, 0, 0);
+                    offCtxR.fillStyle = settings.backgroundColor;
+                    offCtxR.fillRect(0, 0, halfW, stageH);
+                    if (outlineImage) {
+                        offCtxR.setTransform(pDual, 0, 0, pDual, halfW / 2, stageH / 2);
+                        offCtxR.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
+                    }
+                    offCtxR.restore();
+
+                    rendererR.drawFrame({
+                        globalTime: t,
+                        buckets: dataR.buckets,
+                        dt: step,
+                        showSensor: settings.showSensor,
+                        showSensorText: false,
+                        playCombo: dataR.playCombo,
+                        playScore: dataR.playScore,
+                        nowIndex: nowIndexR,
+                        skipClear: true,
+                        noteQuantity: dataR.noteQuantity,
+                        playScoreRes: playScoreResR,
+                    });
+
+                    // 合成到 960x540 總畫布
+                    offCtx.save();
+                    offCtx.setTransform(1, 0, 0, 1, 0, 0);
+                    offCtx.fillStyle = settings.backgroundColor;
+                    offCtx.fillRect(0, 0, width, height);
+
+                    offCtx.drawImage(offL, 0, 0);
+                    offCtx.drawImage(offR, halfW, 0);
+
+                    // 中間分隔線
+                    offCtx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+                    offCtx.lineWidth = 1;
+                    offCtx.beginPath();
+                    offCtx.moveTo(halfW, 10);
+                    offCtx.lineTo(halfW, height - 10);
+                    offCtx.stroke();
+
+                    // 1P 標籤膠囊 (藍色)
+                    offCtx.fillStyle = 'rgba(56, 200, 255, 0.2)';
+                    offCtx.strokeStyle = '#38c8ff';
+                    offCtx.lineWidth = 1.5;
+                    roundRect(offCtx, halfW * 0.5 - 55, 10, 110, 22, 6, true, true);
+                    offCtx.font = 'bold 11px sans-serif';
+                    offCtx.fillStyle = '#38c8ff';
+                    offCtx.textAlign = 'center';
+                    offCtx.textBaseline = 'middle';
+                    offCtx.fillText('🔷 1P (L)', halfW * 0.5, 21);
+
+                    // 2P 標籤膠囊 (粉色)
+                    offCtx.fillStyle = 'rgba(255, 79, 165, 0.2)';
+                    offCtx.strokeStyle = '#ff4fa5';
+                    offCtx.lineWidth = 1.5;
+                    roundRect(offCtx, halfW + halfW * 0.5 - 55, 10, 110, 22, 6, true, true);
+                    offCtx.font = 'bold 11px sans-serif';
+                    offCtx.fillStyle = '#ff4fa5';
+                    offCtx.textAlign = 'center';
+                    offCtx.textBaseline = 'middle';
+                    offCtx.fillText('🌸 2P (R)', halfW + halfW * 0.5, 21);
+
+                    offCtx.restore();
+
+                    const dataUrl = off.toDataURL('image/png');
+                    await window.__emitFrame(dataUrl.slice(dataUrl.indexOf(',') + 1));
+
+                    if (i % 30 === 0) {
+                        window.__renderProgress = (i + 1) / frameCount;
+                    }
                 }
-            }
+            } else {
+                // ================= 單人模式 (Single Centered) =================
+                const rendererL = new SimaiRenderer(off, settings);
+                rendererL.setImages(images);
+                rendererL.setContext(offCtx);
 
-            window.__renderProgress = 0;
+                const pSingle = Math.min(width, height) / scaleBase * rendererL.scale;
+                offCtx.setTransform(pSingle, 0, 0, pSingle, width / 2, height / 2);
 
-            for (let i = 0; i < frameCount; i++) {
-                const t = renderStart + i * step;
+                const logicL = new SimaiLogicControler();
+                const playScoreResL = { tap: 0, hold: 0, slide: 0, touch: 0, break: 0, score: 0, breakScore: 0, invScore: 0 };
+                let nowIndexL = 0;
 
-                const {
-                    buckets, playCombo, playScore, noteQuantity,
-                    nowIndex: updatedNowIndex,
-                } = logic.get({
-                    renderer,
-                    globalTime: t,
-                    realTime: t,
-                    musicDelay: 0,
-                    playing: false,
-                    timeControlSliding: false,
-                    readyBeat: false,
-                    playedClock: [],
-                    settings,
-                    visualHeight: 0,
-                    notes,
-                    decodedTags: decoded.tags || [],
-                    playScoreRes,
-                    nowIndex: nowIndexLocal,
-                    skipAudioQueue: true,
-                });
-                nowIndexLocal = updatedNowIndex;
-
-                offCtx.save();
-                offCtx.setTransform(1, 0, 0, 1, 0, 0);
-                offCtx.fillStyle = settings.backgroundColor;
-                offCtx.fillRect(0, 0, width, height);
-                if (outlineImage) {
-                    offCtx.setTransform(p, 0, 0, p, width / 2, height / 2);
-                    offCtx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
+                if (renderStart > 0) {
+                    const warmupStep = 1 / 60;
+                    for (let simT = 0; simT < renderStart; simT += warmupStep) {
+                        const resL = logicL.get({
+                            renderer: rendererL,
+                            globalTime: simT,
+                            realTime: simT,
+                            musicDelay: 0,
+                            playing: false,
+                            timeControlSliding: false,
+                            readyBeat: false,
+                            playedClock: [],
+                            settings,
+                            visualHeight: 0,
+                            notes: notesL,
+                            decodedTags: decodedL.tags || [],
+                            playScoreRes: playScoreResL,
+                            nowIndex: nowIndexL,
+                            skipAudioQueue: true,
+                        });
+                        nowIndexL = resL.nowIndex;
+                    }
                 }
-                offCtx.restore();
 
-                renderer.drawFrame({
-                    globalTime: t,
-                    buckets,
-                    dt: step,
-                    showSensor: settings.showSensor,
-                    showSensorText: false,
-                    playCombo,
-                    playScore,
-                    nowIndex: nowIndexLocal,
-                    skipClear: true,
-                    noteQuantity,
-                    playScoreRes,
-                });
+                for (let i = 0; i < frameCount; i++) {
+                    const t = renderStart + i * step;
 
-                // toDataURL 直接回傳 base64；切掉 "data:image/png;base64," 前綴後串回 Node。
-                // await 每一幀 → 天然背壓，避免瀏覽器搶跑塞爆 CDP 佇列。
-                const dataUrl = off.toDataURL('image/png');
-                await window.__emitFrame(dataUrl.slice(dataUrl.indexOf(',') + 1));
+                    const dataL = logicL.get({
+                        renderer: rendererL,
+                        globalTime: t,
+                        realTime: t,
+                        musicDelay: 0,
+                        playing: false,
+                        timeControlSliding: false,
+                        readyBeat: false,
+                        playedClock: [],
+                        settings,
+                        visualHeight: 0,
+                        notes: notesL,
+                        decodedTags: decodedL.tags || [],
+                        playScoreRes: playScoreResL,
+                        nowIndex: nowIndexL,
+                        skipAudioQueue: true,
+                    });
+                    nowIndexL = dataL.nowIndex;
 
-                if (i % 30 === 0) {
-                    window.__renderProgress = (i + 1) / frameCount;
+                    offCtx.save();
+                    offCtx.setTransform(1, 0, 0, 1, 0, 0);
+                    offCtx.fillStyle = settings.backgroundColor;
+                    offCtx.fillRect(0, 0, width, height);
+                    if (outlineImage) {
+                        offCtx.setTransform(pSingle, 0, 0, pSingle, width / 2, height / 2);
+                        offCtx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
+                    }
+                    offCtx.restore();
+
+                    rendererL.drawFrame({
+                        globalTime: t,
+                        buckets: dataL.buckets,
+                        dt: step,
+                        showSensor: settings.showSensor,
+                        showSensorText: false,
+                        playCombo: dataL.playCombo,
+                        playScore: dataL.playScore,
+                        nowIndex: nowIndexL,
+                        skipClear: true,
+                        noteQuantity: dataL.noteQuantity,
+                        playScoreRes: playScoreResL,
+                    });
+
+                    const dataUrl = off.toDataURL('image/png');
+                    await window.__emitFrame(dataUrl.slice(dataUrl.indexOf(',') + 1));
+
+                    if (i % 30 === 0) {
+                        window.__renderProgress = (i + 1) / frameCount;
+                    }
                 }
             }
 
@@ -255,6 +466,22 @@
                 warnpos: [...(warnpos || [])],
             };
         };
+
+        function roundRect(ctx, x, y, width, height, radius, fill, stroke) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+            if (fill) ctx.fill();
+            if (stroke) ctx.stroke();
+        }
 
         window.__rendererReady = true;
     </script>

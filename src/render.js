@@ -67,6 +67,10 @@ export class SimaiRenderService {
                 // 覆寫 headless-render.html 的 defaultSettings，例如
                 // { noteEndBehavior: 'through' } 讓音符不擊打、直接穿過判定線
                 settingsOverride = {},
+                isDual = false,
+                simaiTextR = null,
+                nameL = '1P (L)',
+                nameR = '2P (R)',
             } = opts;
 
             // 瀏覽器逐幀渲染，PNG 幀透過 __emitFrame binding 一幀幀進到這個陣列
@@ -76,7 +80,7 @@ export class SimaiRenderService {
             try {
                 result = await this.#page.evaluate(
                     ([text, o]) => window.renderChartToFrames(text, o),
-                    [simaiText, { width, height, fps: RENDER_FPS, start, end, maxDuration, settingsOverride }]
+                    [simaiText, { width, height, fps: RENDER_FPS, start, end, maxDuration, settingsOverride, isDual, simaiTextR, nameL, nameR }]
                 );
             } finally {
                 this.#frameSink = null;

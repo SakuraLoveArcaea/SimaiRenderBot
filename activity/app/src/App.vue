@@ -1,29 +1,32 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { useChartData } from './composables/useChartData.js';
+import { usePlayerEngine } from './composables/usePlayerEngine.js';
+import { useSfx } from './composables/useSfx.js';
+import { useRangeSelection } from './composables/useRangeSelection.js';
+import { useDiscordSession } from './composables/useDiscordSession.js';
+import { fatalError, logRemote } from './composables/useDebugLogging.js';
+import { buildCleanCutSimai } from '../../../engine/Scripts/simaiCut.js';
+
 import HeaderStatus from './components/HeaderStatus.vue';
 import SettingsPanel from './components/SettingsPanel.vue';
-import PlayerControls from './components/PlayerControls.vue';
 import ChartCanvas from './components/ChartCanvas.vue';
+import PlayerControls from './components/PlayerControls.vue';
 import Timeline from './components/Timeline.vue';
 import ColorLegend from './components/ColorLegend.vue';
 import FooterMessage from './components/FooterMessage.vue';
 import ConfirmModal from './components/ConfirmModal.vue';
 import PreviewModal from './components/PreviewModal.vue';
-import { useChartData } from './composables/useChartData.js';
-import { usePlayerEngine } from './composables/usePlayerEngine.js';
-import { useSfx } from './composables/useSfx.js';
-import { useRangeSelection, MAX_RENDER_SEC } from './composables/useRangeSelection.js';
-import { useDiscordSession } from './composables/useDiscordSession.js';
-import { fatalError, logRemote } from './composables/useDebugLogging.js';
 
-// composable 之間互相依賴：chart 先載好資料，engine/rangeSel 再從 chart 讀資料出來用。
-// 這不是什麼特殊機制，composable 就是一般函式，把前一個的回傳值當參數傳給下一個即可。
+// 譜面與引擎實例（支援雙譜面 L/R 同步）
 const chart = useChartData();
-const engine = usePlayerEngine(chart);
+const chartR = useChartData();
+const engine = usePlayerEngine(chart, chartR);
 const sfx = useSfx();
 const rangeSel = useRangeSelection(chart, engine);
 const session = useDiscordSession();
 
+const isDualMode = ref(false);
 const songTitleDisplay = ref('連線中…');
 const retryVisible = ref(false);
 const inputsEnabled = ref(false);
@@ -33,6 +36,8 @@ const settingsPositionStyle = ref({});
 const confirmOpen = ref(false);
 const confirmMeta = ref('');
 const confirmText = ref('');
+const confirmTextL = ref('');
+const confirmTextR = ref('');
 const previewOpen = ref(false);
 const chartList = ref([]);
 const currentChartId = ref('');
@@ -49,8 +54,18 @@ async function onSelectChart(chartId) {
   showMessage('🔄 正在切換測試譜面…', 'info');
   try {
     const data = await session.fetchChartData(chartId);
-    chart.loadFromText(data.text, data.name);
-    songTitleDisplay.value = chart.chartName.value;
+    const hasDual = !!(data.isDual && data.textL && data.textR);
+    if (hasDual) {
+      chart.loadFromText(data.textL, data.nameL || `${data.title} [1P (L)]`);
+      chartR.loadFromText(data.textR, data.nameR || `${data.title} [2P (R)]`);
+      isDualMode.value = true;
+      songTitleDisplay.value = `${data.title} [宴 雙人協同]`;
+    } else {
+      chart.loadFromText(data.text, data.name);
+      chartR.clear();
+      isDualMode.value = false;
+      songTitleDisplay.value = chart.chartName.value;
+    }
     currentChartId.value = data.filename || chartId;
 
     engine.resetPlaybackState();
@@ -59,7 +74,7 @@ async function onSelectChart(chartId) {
     engine.seek(0);
     rangeSel.setActiveEndpoint(null);
     inputsEnabled.value = true; 
-    showMessage(`✅ 已切換至譜面：${chart.chartName.value}`, 'success');
+    showMessage(`✅ 已切換至譜面：${songTitleDisplay.value}`, 'success');
   } catch (e) {
     console.error('切換譜面失敗:', e);
     showMessage(`❌ 切換譜面失敗：${e.message}`, 'error');
@@ -70,6 +85,7 @@ async function onSelectChart(chartId) {
 const hudBpm = computed(() => chart.DATA.value ? Math.round(chart.DATA.value.meta.bpm) : '-');
 const hudMeasureMax = computed(() => chart.DATA.value ? chart.M.value.length - 1 : '-');
 const hudComboMax = computed(() => chart.DATA.value ? chart.N.value.length : '-');
+const hudComboMaxR = computed(() => chartR.DATA.value ? chartR.N.value.length : '-');
 const metaLine = computed(() => {
   if (!chart.DATA.value) return '';
   const c = chart.DATA.value.meta.counts;
@@ -107,15 +123,26 @@ async function init() {
     session.setStatus('連線中：正在獲取譜面資料…', 'status-connecting');
     if (targetChartId) {
       const data = await session.fetchChartData(targetChartId);
-      chart.loadFromText(data.text, data.name);
+      const hasDual = !!(data.isDual && data.textL && data.textR);
+      if (hasDual) {
+        chart.loadFromText(data.textL, data.nameL || `${data.title} [1P (L)]`);
+        chartR.loadFromText(data.textR, data.nameR || `${data.title} [2P (R)]`);
+        isDualMode.value = true;
+        songTitleDisplay.value = `${data.title} [宴 雙人協同]`;
+      } else {
+        chart.loadFromText(data.text, data.name);
+        chartR.clear();
+        isDualMode.value = false;
+        songTitleDisplay.value = chart.chartName.value;
+      }
       currentChartId.value = data.filename || targetChartId;
     } else {
       await chart.loadChart(fetchChartPath);
       const initialChart = list.find(c => c.name === chart.chartName.value);
       if (initialChart) currentChartId.value = initialChart.id;
+      songTitleDisplay.value = chart.chartName.value;
     }
-    songTitleDisplay.value = chart.chartName.value;
-    logRemote('setup:chart_fetched', { name: chart.chartName.value });
+    logRemote('setup:chart_fetched', { name: songTitleDisplay.value });
 
     session.setStatus('連線中：正在載入圖片素材…', 'status-connecting');
     await engine.loadAssets();
@@ -209,6 +236,7 @@ function onSetHs(v) {
 function onCycleMirror() {
   engine.pause();
   chart.cycleMirror();
+  if (isDualMode.value) chartR.cycleMirror();
   engine.resetPlaybackState();
   const maxComma = chart.C.value.length - 2;
   rangeSel.initBounds(maxComma, { start: 0, end: maxComma });
@@ -227,6 +255,26 @@ function openConfirmModal() {
   const preview = rangeSel.buildExportPreview();
   confirmMeta.value = preview.meta;
   confirmText.value = preview.text;
+
+  if (isDualMode.value && chartR.chartText.value) {
+    try {
+      const startComma = rangeSel.range.value.start;
+      const endComma = rangeSel.range.value.end;
+      const infoL = { indexToTime: chart.C.value, tags: chart.DATA.value?.tags || [], bpm: chart.DATA.value?.meta?.bpm };
+      const infoR = { indexToTime: chartR.C.value, tags: chartR.DATA.value?.tags || [], bpm: chartR.DATA.value?.meta?.bpm };
+      const startT = chart.C.value[startComma] ?? 0;
+      const endT = chart.C.value[endComma + 1] ?? chart.DATA.value?.meta?.endTime;
+      confirmTextL.value = buildCleanCutSimai(chart.chartText.value, infoL, startT, endT);
+      confirmTextR.value = buildCleanCutSimai(chartR.chartText.value, infoR, startT, endT);
+    } catch (e) {
+      confirmTextL.value = preview.text;
+      confirmTextR.value = '';
+    }
+  } else {
+    confirmTextL.value = preview.text;
+    confirmTextR.value = '';
+  }
+
   confirmOpen.value = true;
 }
 function closeConfirmModal() {
@@ -244,28 +292,56 @@ async function doExport() {
   try {
     const res = await session.submitRender({
       simai: chart.chartText.value,
+      isDual: isDualMode.value,
+      simaiL: isDualMode.value ? chart.chartText.value : null,
+      simaiR: isDualMode.value ? chartR.chartText.value : null,
       startComma: rangeSel.range.value.start,
       endComma: rangeSel.range.value.end,
       chartName: songTitleDisplay.value,
       cleanCut: rangeSel.cleanCut.value,
+      durationSec: dur.duration,
     });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      const truncNote = dur > MAX_RENDER_SEC ? `（僅渲染前 ${MAX_RENDER_SEC} 秒）` : '';
-      showMessage(`✅ 請求成功${truncNote}！正在關閉視窗並在頻道中開始渲染…`, 'success');
-      setTimeout(() => session.closeActivity(), 800);
-      return; // 送出成功後保持 disabled，等待視窗關閉，不重新啟用按鈕
+    if (res?.alreadyDone) {
+      showMessage('🎉 這段範圍先前已渲染完成，已直接傳送！', 'success');
+    } else {
+      const waitText = (typeof res?.position === 'number' && res.position > 0)
+        ? `（排隊中：前方還有 ${res.position} 個任務）`
+        : '（正在產生 GIF…）';
+      showMessage(`🚀 渲染請求已送出 ${waitText}，完成後會自動通知您！`, 'success');
     }
-    showMessage(`❌ 渲染失敗：${data.error || res.statusText}`, 'error');
   } catch (e) {
-    console.error('Export request failed:', e);
-    showMessage(`❌ 網路錯誤，無法傳送請求：${e.message}`, 'error');
+    console.error(e);
+    showMessage(`❌ 送出失敗：${e.message || String(e)}`, 'error');
+  } finally {
+    inputsEnabled.value = true;
   }
-  inputsEnabled.value = true; // 只有失敗的情況才重新啟用 UI
 }
 
-// ---------- 鍵盤方向鍵：碰過端點就微調端點，否則微調播放進度 ----------
+// ---------- 鍵盤快捷鍵 ----------
 function onKeyDown(e) {
+  if (e.target.matches('input, select, textarea, button')) return;
+
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (inputsEnabled.value) engine.togglePlay();
+    return;
+  }
+  if (e.key === 'Home') {
+    e.preventDefault();
+    if (inputsEnabled.value) rangeSel.goStart();
+    return;
+  }
+  if (e.key === '[' || e.key === '{') {
+    e.preventDefault();
+    if (inputsEnabled.value) rangeSel.setStart();
+    return;
+  }
+  if (e.key === ']' || e.key === '}') {
+    e.preventDefault();
+    if (inputsEnabled.value) rangeSel.setEnd();
+    return;
+  }
+
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
   if (!chart.DATA.value || !inputsEnabled.value) return;
   const dir = e.key === 'ArrowLeft' ? -1 : 1;
@@ -304,7 +380,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="container">
+  <div class="container" :class="{ 'is-dual': isDualMode }">
     <HeaderStatus
       ref="headerRef"
       :song-title="songTitleDisplay"
@@ -340,27 +416,70 @@ onUnmounted(() => {
       @cycle-mirror="onCycleMirror"
     />
 
-    <div class="main-content">
-      <div class="left-panel">
+    <div class="main-content" :class="{ 'is-dual-layout': isDualMode }">
+      <!-- 左/主區域 -->
+      <div class="left-panel" :class="{ 'dual-panel': isDualMode }">
         <div id="hud">
           <span>BPM <b>{{ hudBpm }}</b></span>
           <span>小節 <b>{{ engine.hudMeasure.value }}</b> / <span>{{ hudMeasureMax }}</span></span>
-          <span>Combo <b>{{ engine.hudCombo.value }}</b> / <span>{{ hudComboMax }}</span></span>
+          <span v-if="!isDualMode">Combo <b>{{ engine.hudCombo.value }}</b> / <span>{{ hudComboMax }}</span></span>
+          <span v-else>協同模式 <b>雙人譜面</b></span>
         </div>
 
-        <div class="player-row">
-          <PlayerControls
-            side="left" :playing="engine.playing.value" :disabled="!inputsEnabled"
-            @jump-time="onJumpTime" @step-note="onStepNote" @step-comma="onStepComma"
-            @toggle-play="engine.togglePlay()"
-          />
-          <ChartCanvas :attach="engine.attachCanvas" :detach="engine.detachCanvas" />
-          <PlayerControls
-            side="right" :playing="engine.playing.value" :disabled="!inputsEnabled"
-            @jump-time="onJumpTime" @step-note="onStepNote" @step-comma="onStepComma"
-            @toggle-play="engine.togglePlay()"
-          />
-        </div>
+        <!-- 雙人/協同模式：並排顯示 1P 與 2P 兩個播放器，下方統一控制列 -->
+        <template v-if="isDualMode">
+          <div class="dual-player-row">
+            <div class="player-stage-card">
+              <div class="player-stage-badge l">
+                <span>🔷 1P (L)</span>
+                <span class="player-combo-val">Combo <b>{{ engine.hudCombo.value }}</b> / {{ hudComboMax }}</span>
+              </div>
+              <div class="stage-container">
+                <ChartCanvas :attach="engine.attachCanvas" :detach="engine.detachCanvas" stage-id="stageL" canvas-id="chartCanvasL" />
+              </div>
+            </div>
+
+            <div class="player-stage-card">
+              <div class="player-stage-badge r">
+                <span>🌸 2P (R)</span>
+                <span class="player-combo-val">Combo <b>{{ engine.hudComboR.value }}</b> / {{ hudComboMaxR }}</span>
+              </div>
+              <div class="stage-container">
+                <ChartCanvas :attach="engine.attachCanvasR" :detach="engine.detachCanvasR" stage-id="stageR" canvas-id="chartCanvasR" />
+              </div>
+            </div>
+          </div>
+
+          <!-- 雙播放器正下方的統一控制列 -->
+          <div class="dual-player-controls-bottom">
+            <button title="後退約3秒" :disabled="!inputsEnabled" @click="onJumpTime(-3)">＜＜＜</button>
+            <button title="跳到上一顆音符" :disabled="!inputsEnabled" @click="onStepNote(-1)">＜＜</button>
+            <button title="後退 1 個逗號" :disabled="!inputsEnabled" @click="onStepComma(-1)">＜</button>
+            <button class="btn-play-large" :disabled="!inputsEnabled" @click="engine.togglePlay()">
+              {{ engine.playing.value ? '⏸ 暫停' : '▶ 播放' }}
+            </button>
+            <button title="前進 1 個逗號" :disabled="!inputsEnabled" @click="onStepComma(1)">＞</button>
+            <button title="跳到下一顆音符" :disabled="!inputsEnabled" @click="onStepNote(1)">＞＞</button>
+            <button title="前進約3秒" :disabled="!inputsEnabled" @click="onJumpTime(3)">＞＞＞</button>
+          </div>
+        </template>
+
+        <!-- 單人模式：單一播放器 -->
+        <template v-else>
+          <div class="player-row">
+            <PlayerControls
+              side="left" :playing="engine.playing.value" :disabled="!inputsEnabled"
+              @jump-time="onJumpTime" @step-note="onStepNote" @step-comma="onStepComma"
+              @toggle-play="engine.togglePlay()"
+            />
+            <ChartCanvas :attach="engine.attachCanvas" :detach="engine.detachCanvas" />
+            <PlayerControls
+              side="right" :playing="engine.playing.value" :disabled="!inputsEnabled"
+              @jump-time="onJumpTime" @step-note="onStepNote" @step-comma="onStepComma"
+              @toggle-play="engine.togglePlay()"
+            />
+          </div>
+        </template>
       </div>
 
       <div class="right-panel">
@@ -371,6 +490,15 @@ onUnmounted(() => {
     </div>
   </div>
 
-  <ConfirmModal :open="confirmOpen" :meta="confirmMeta" :preview-text="confirmText" @confirm="onConfirmSend" @cancel="closeConfirmModal" />
-  <PreviewModal :open="previewOpen" :chart="chart" :range-sel="rangeSel" @close="previewOpen = false" />
+  <ConfirmModal
+    :open="confirmOpen"
+    :meta="confirmMeta"
+    :preview-text="confirmText"
+    :is-dual="isDualMode"
+    :preview-text-l="confirmTextL"
+    :preview-text-r="confirmTextR"
+    @confirm="onConfirmSend"
+    @cancel="closeConfirmModal"
+  />
+  <PreviewModal :open="previewOpen" :chart="chart" :chart-r="chartR" :is-dual="isDualMode" :range-sel="rangeSel" @close="previewOpen = false" />
 </template>

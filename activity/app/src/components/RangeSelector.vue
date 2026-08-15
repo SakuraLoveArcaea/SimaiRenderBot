@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 
 const props = defineProps({
   chart: { type: Object, required: true },
@@ -7,10 +7,17 @@ const props = defineProps({
   rangeSel: { type: Object, required: true },
   disabled: { type: Boolean, default: true },
 });
-const emit = defineEmits(['export', 'preview']);
+const emit = defineEmits(['export', 'preview', 'toggle-collapse']);
+
+const isCollapsed = ref(false);
 
 let lastTapA = 0;
 let lastTapB = 0;
+
+function toggleCollapse() {
+  isCollapsed.value = !isCollapsed.value;
+  emit('toggle-collapse', isCollapsed.value);
+}
 
 // 雙點：播放頭直接定位到該端點目前的位置。手機上的 dblclick 不可靠，自己用 pointerdown 判定
 function onTrackPointerDown(which) {
@@ -42,53 +49,70 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div id="rangePanel">
-    <div id="rangeHeader">
-      <span class="range-title">✂️ 選取並傳送</span>
-      <span id="rangeLabel" :class="{ 'over-limit': rangeSel.rangeOverLimit.value }">{{ rangeSel.rangeLabel.value }}</span>
+  <div id="rangePanel" :class="{ 'is-collapsed': isCollapsed }">
+    <div id="rangeHeader" @click="toggleCollapse">
+      <div class="range-header-left">
+        <span class="range-title">✂️ 剪輯區間</span>
+        <span id="rangeLabel" :class="{ 'over-limit': rangeSel.rangeOverLimit.value }">{{ rangeSel.rangeLabel.value }}</span>
+      </div>
+      <button class="btn-collapse-toggle" :title="isCollapsed ? '展開剪輯控制面板' : '折疊剪輯區以最大化播放器'">
+        <span>{{ isCollapsed ? '展開 ▴' : '折疊 ▾' }}</span>
+      </button>
     </div>
 
-    <div class="range-row">
-      <span class="range-row-label">起</span>
-      <div class="range-track" :class="{ 'over-limit': rangeSel.rangeOverLimit.value }" @pointerdown="onTrackPointerDown('a')">
-        <div class="range-track-bg"></div>
-        <input
-          type="range" min="0" :max="rangeSel.maxComma.value" step="1"
-          :value="rangeSel.rangeAValue.value" :disabled="disabled"
-          :class="{ active: rangeSel.activeEndpoint.value === 'a' }"
-          @input="rangeSel.onRangeInput('a', +$event.target.value)"
-        >
-        <div class="range-tip" :style="{ left: (rangeSel.rangeAValue.value / (rangeSel.maxComma.value || 1)) * 100 + '%' }">
-          {{ rangeSel.commaLabel(rangeSel.rangeAValue.value) }}
-        </div>
+    <!-- 折疊時的極簡快捷列 -->
+    <div v-if="isCollapsed" class="range-collapsed-bar">
+      <div class="range-collapsed-actions">
+        <button class="btn-mini-action" :disabled="disabled" @click.stop="rangeSel.goStart()">⏮ 起點</button>
+        <button class="btn-mini-action" :disabled="disabled" @click.stop="emit('preview')">▶ 預覽</button>
+        <button class="btn-mini-export" :disabled="disabled" @click.stop="emit('export')">✅ 傳送此區段</button>
       </div>
     </div>
 
-    <div class="range-row">
-      <span class="range-row-label">終</span>
-      <div class="range-track" :class="{ 'over-limit': rangeSel.rangeOverLimit.value }" @pointerdown="onTrackPointerDown('b')">
-        <div class="range-track-bg"></div>
-        <input
-          type="range" min="0" :max="rangeSel.maxComma.value" step="1"
-          :value="rangeSel.rangeBValue.value" :disabled="disabled"
-          :class="{ active: rangeSel.activeEndpoint.value === 'b' }"
-          @input="rangeSel.onRangeInput('b', +$event.target.value)"
-        >
-        <div class="range-tip" :style="{ left: (rangeSel.rangeBValue.value / (rangeSel.maxComma.value || 1)) * 100 + '%' }">
-          {{ rangeSel.commaLabel(rangeSel.rangeBValue.value) }}
+    <!-- 展開時的完整控制滑桿與按鈕 -->
+    <div v-show="!isCollapsed" class="range-expanded-body">
+      <div class="range-row">
+        <span class="range-row-label">起</span>
+        <div class="range-track" :class="{ 'over-limit': rangeSel.rangeOverLimit.value }" @pointerdown="onTrackPointerDown('a')">
+          <div class="range-track-bg"></div>
+          <input
+            type="range" min="0" :max="rangeSel.maxComma.value" step="1"
+            :value="rangeSel.rangeAValue.value" :disabled="disabled"
+            :class="{ active: rangeSel.activeEndpoint.value === 'a' }"
+            @input="rangeSel.onRangeInput('a', +$event.target.value)"
+          >
+          <div class="range-tip" :style="{ left: (rangeSel.rangeAValue.value / (rangeSel.maxComma.value || 1)) * 100 + '%' }">
+            {{ rangeSel.commaLabel(rangeSel.rangeAValue.value) }}
+          </div>
         </div>
       </div>
-    </div>
 
-    <div id="rangeEnds">
-      <button :disabled="disabled" @click="rangeSel.setStart()">← 起點</button>
-      <button :disabled="disabled" @click="rangeSel.setEnd()">終點 →</button>
-    </div>
+      <div class="range-row">
+        <span class="range-row-label">終</span>
+        <div class="range-track" :class="{ 'over-limit': rangeSel.rangeOverLimit.value }" @pointerdown="onTrackPointerDown('b')">
+          <div class="range-track-bg"></div>
+          <input
+            type="range" min="0" :max="rangeSel.maxComma.value" step="1"
+            :value="rangeSel.rangeBValue.value" :disabled="disabled"
+            :class="{ active: rangeSel.activeEndpoint.value === 'b' }"
+            @input="rangeSel.onRangeInput('b', +$event.target.value)"
+          >
+          <div class="range-tip" :style="{ left: (rangeSel.rangeBValue.value / (rangeSel.maxComma.value || 1)) * 100 + '%' }">
+            {{ rangeSel.commaLabel(rangeSel.rangeBValue.value) }}
+          </div>
+        </div>
+      </div>
 
-    <div id="rangeActions">
-      <button :disabled="disabled" @click="rangeSel.goStart()">跳到起點</button>
-      <button :disabled="disabled" @click="emit('preview')">▶ 預覽</button>
+      <div id="rangeEnds">
+        <button :disabled="disabled" @click="rangeSel.setStart()">← 起點</button>
+        <button :disabled="disabled" @click="rangeSel.setEnd()">終點 →</button>
+      </div>
+
+      <div id="rangeActions">
+        <button :disabled="disabled" @click="rangeSel.goStart()">跳到起點</button>
+        <button :disabled="disabled" @click="emit('preview')">▶ 預覽</button>
+      </div>
+      <button class="btn-export" :disabled="disabled" @click="emit('export')">✅ 傳送此區間</button>
     </div>
-    <button class="btn-export" :disabled="disabled" @click="emit('export')">✅ 傳送此區間</button>
   </div>
 </template>

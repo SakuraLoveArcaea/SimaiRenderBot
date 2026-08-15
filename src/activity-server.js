@@ -217,7 +217,7 @@ async function handleNotify(req, res, client) {
 
 /** 互動頁面渲染請求：呼叫渲染引擎產出 GIF 並發到對應頻道 */
 async function handleRender(req, res, client, service) {
-    const { channelId, userId, username, simai, startComma, endComma, chartName, cleanCut } = await readJsonBody(req);
+    const { channelId, userId, username, simai, isDual, simaiL, simaiR, startComma, endComma, chartName, cleanCut } = await readJsonBody(req);
 
     // 「切的乾淨」：把選取範圍從 simai 原始碼切出來成一段獨立譜面（切到 hold／slide
     // 中間也照切），並補回開頭的 BPM／分音再送去渲染。關閉時沿用舊做法：送整份譜面
@@ -278,9 +278,13 @@ async function handleRender(req, res, client, service) {
         const safeEnd   = Math.max(0, Math.min(Math.floor(endComma),   commaCount - 1));
 
         // 精準邊界：safeEnd 這個逗號段要整段包進去，得看「下一個逗號」的起點才對
-        const exactEnd = indexToTime[safeEnd + 1] ?? endTime;
         const start = indexToTime[safeStart] ?? 0;
-        const end   = Math.min(endTime, exactEnd);
+        const end   = indexToTime[safeEnd + 1] ?? endTime;
+        const exactEnd = indexToTime[safeEnd + 1] ?? null;
+
+        // 計算 combo 範圍：找 [start, end) 內第一顆／最後一顆音符的 1-based 序號
+        const combo = comboRangeOf(comboTimes, start, end);
+        const comboLabel = combo ? `Combo ${combo.first}–${combo.last}` : '選取區間';
 
         // 6. 空區間防護
         if (end <= start) {
@@ -292,9 +296,6 @@ async function handleRender(req, res, client, service) {
         const notesInRange = comboTimes.filter(t => t >= start && t <= end).length;
         const estMs = service.estimateRenderMs(end - start, notesInRange);
         const estSec = Math.ceil(estMs / 1000);
-
-        const combo = comboRangeOf(comboTimes, start, exactEnd);
-        const comboLabel = combo ? `Combo ${combo.first} - ${combo.last}` : '（此區間沒有音符）';
 
         // 立即發送進度提示訊息到 Discord 頻道中
         const progressMsg = await channel.send({
@@ -308,14 +309,19 @@ async function handleRender(req, res, client, service) {
         // 在背景非同步執行實際渲染與傳送
         (async () => {
             try {
-                // 切的乾淨：先把片段切出來（含補回開頭的 BPM／分音），整段從頭渲染；
-                // 否則沿用舊做法，送整份譜面並指定起訖時間。
-                const renderText = exact
-                    ? buildCleanCutSimai(simai, info, start, exactEnd)
-                    : simai;
+                let renderText = simai;
+                let renderTextR = null;
+                if (isDual && simaiR) {
+                    const infoR = await service.comboInfo(simaiR);
+                    renderText = exact ? buildCleanCutSimai(simaiL || simai, info, start, exactEnd) : (simaiL || simai);
+                    renderTextR = exact ? buildCleanCutSimai(simaiR, infoR, start, exactEnd) : simaiR;
+                } else {
+                    renderText = exact ? buildCleanCutSimai(simai, info, start, exactEnd) : simai;
+                }
+
                 const renderOpts = exact
-                    ? { maxDuration: MAX_RENDER_SEC }
-                    : { maxDuration: MAX_RENDER_SEC, start, end };
+                    ? { maxDuration: MAX_RENDER_SEC, isDual: !!isDual, simaiTextR: renderTextR }
+                    : { maxDuration: MAX_RENDER_SEC, start, end, isDual: !!isDual, simaiTextR: renderTextR };
                 const { gif } = await service.renderGif(renderText, renderOpts);
 
                 const truncated = end - start > MAX_RENDER_SEC;

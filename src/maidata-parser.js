@@ -169,6 +169,14 @@ export function buildSimaiFromSong(song, requestedDiff = null) {
   const diffLabel = DIFFICULTY_LABELS[diff] || diff.toUpperCase();
   const displayName = `${song.title} [${diffLabel}${level}]`;
 
+  const hasDual = !!(song.inotes?.['utage_l'] && song.inotes?.['utage_r']);
+  let textL = null;
+  let textR = null;
+  if (hasDual) {
+    textL = song.inotes['utage_l'].startsWith('(') ? song.inotes['utage_l'] : `(${song.bpm || 120})\n${song.inotes['utage_l']}`;
+    textR = song.inotes['utage_r'].startsWith('(') ? song.inotes['utage_r'] : `(${song.bpm || 120})\n${song.inotes['utage_r']}`;
+  }
+
   return {
     name: displayName,
     title: song.title,
@@ -177,6 +185,13 @@ export function buildSimaiFromSong(song, requestedDiff = null) {
     bpm: song.bpm,
     text: simaiText,
     filename: `${sanitizeId(song.title)}_${diff}.simai`,
+    isDual: hasDual,
+    textL,
+    textR,
+    levelL: song.levels?.['utage_l'] || '',
+    levelR: song.levels?.['utage_r'] || '',
+    nameL: hasDual ? `${song.title} [1P (L)${song.levels?.['utage_l'] ? ` ${song.levels['utage_l']}` : ''}]` : '',
+    nameR: hasDual ? `${song.title} [2P (R)${song.levels?.['utage_r'] ? ` ${song.levels['utage_r']}` : ''}]` : '',
   };
 }
 
