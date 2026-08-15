@@ -15,3 +15,4 @@ out/
 # 系統雜項
 .DS_Store
 *.log
+codebase.md
