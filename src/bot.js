@@ -60,7 +60,7 @@ client.once('clientReady', () => {
 client.on('interactionCreate', async (interaction) => {
     try {
         if (interaction.isAutocomplete()) {
-            if (interaction.commandName === 'testchart') {
+            if (interaction.commandName === 'play') {
                 const focusedValue = (interaction.options.getFocused() || '').toLowerCase();
                 const charts = await listCharts();
                 const filtered = charts
@@ -80,8 +80,7 @@ client.on('interactionCreate', async (interaction) => {
             if (interaction.commandName === 'render') return await handleSlashRender(interaction);
             if (interaction.commandName === 'keyboard') return await handleKeyboardCommand(interaction);
             if (interaction.commandName === 'compose') return await handleComposeCommand(interaction);
-            if (interaction.commandName === 'testchart') return await handleChartCommand(interaction);
-            if (interaction.commandName === 'play') return await interaction.launchActivity();
+            if (interaction.commandName === 'play') return await handlePlayCommand(interaction);
         }
         if (interaction.isMessageContextMenuCommand() && interaction.commandName === '渲染譜面') {
             return await handleContextRender(interaction);
@@ -98,12 +97,6 @@ client.on('interactionCreate', async (interaction) => {
         }
         if (interaction.isButton() && interaction.customId === COMPOSE_RENDER_BTN) {
             return await handleComposeRenderButton(interaction);
-        }
-        if (interaction.isButton() && interaction.customId === CHART_RENDER_BTN) {
-            return await handleChartRenderButton(interaction);
-        }
-        if (interaction.isButton() && interaction.customId === CHART_CANCEL_BTN) {
-            return await handleChartCancelButton(interaction);
         }
         if (interaction.isButton() && interaction.customId.startsWith(FIX_HEADER_PREFIX)) {
             return await handleFixHeaderButton(interaction);
@@ -474,107 +467,15 @@ function isFresh(draft) {
 // 會演變成正式指令），可從指定 combo 開始播放；先讓玩家預覽要渲染的範圍，按了按鈕才真的渲染。
 // ============================================================
 const CHART_RENDER_BTN = 'chart:render';
-const CHART_CANCEL_BTN = 'chart:cancel';
-const CHART_LEAD_SEC = 1;          // 起點往前多帶一點，讓指定的 combo 是「掉下來」而不是憑空出現在判定線上
-const CHART_DEFAULT_DURATION = 10; // 未指定長度時渲染的秒數
-const chartJobs = new Map();       // userId -> { text, name, start, end, combo, createdAt }
-
-async function handleChartCommand(interaction) {
-    const songId = interaction.options.getString('song');
-    const combo = interaction.options.getInteger('combo') ?? 1;
-    const count = interaction.options.getInteger('count');
-    const duration = interaction.options.getNumber('duration');
-
-    // 渲染長度二選一：count（combo 數）或 duration（秒數），都填就不知道該聽誰的
-    if (count != null && duration != null) {
-        return interaction.reply({
-            content: '❌ `count`（combo 數）與 `duration`（秒數）只能擇一',
-            flags: MessageFlags.Ephemeral,
-        });
+/**
+ * /play 指令：若有指定 chart 參數，先存入 resume session，再開啟 Activity 讓前端載入對應譜面
+ */
+async function handlePlayCommand(interaction) {
+    const chartId = interaction.options.getString('chart');
+    if (chartId) {
+        saveResumeSession(interaction.user.id, { chartId });
     }
-
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    const chart = await loadChart(songId);
-    const info = await service.comboInfo(chart.text);
-    const total = info.comboTimes.length;
-    if (!total) {
-        return interaction.editReply({ content: '❌ 譜面解析後沒有任何 note' });
-    }
-    if (combo > total) {
-        return interaction.editReply({ content: `❌ 這份譜面總共 ${total} combo，沒有第 ${combo} 個` });
-    }
-
-    const noteTime = info.comboTimes[combo - 1];
-    const start = Math.max(0, noteTime - CHART_LEAD_SEC);
-
-    // 結束點：指定 combo 數就取最後那個 combo 的判定時間，否則按秒數；都受 MAX_DURATION 上限截斷
-    const lastCombo = count != null ? Math.min(combo + count - 1, total) : null;
-    let end = lastCombo != null
-        ? info.comboTimes[lastCombo - 1]
-        : start + (duration ?? CHART_DEFAULT_DURATION);
-    const clamped = end - start > MAX_DURATION;
-    end = Math.min(end, start + MAX_DURATION, info.endTime);
-    if (end <= start) end = Math.min(start + 2, info.endTime); // count=1 之類的極短範圍給個保底長度
-
-    // 預估只算範圍內的音符（comboTimes 已有逐 note 時間，不用比例粗估）
-    const notesInRange = info.comboTimes.filter((t) => t >= start && t <= end).length;
-    const etaMs = service.estimateRenderMs(end - start, notesInRange);
-    const etaSec = Math.ceil(etaMs / 1000);
-
-    const comboRange = lastCombo != null ? `#${combo} → #${lastCombo}（共 ${total}）` : `#${combo}（共 ${total}）`;
-    const embed = new EmbedBuilder()
-        .setTitle(`🗺️ 渲染範圍預覽：${chart.name}`)
-        .setColor(0x9B59B6)
-        .addFields(
-            { name: 'combo 範圍', value: comboRange, inline: true },
-            { name: '時間範圍', value: `${start.toFixed(3)}s → ${end.toFixed(3)}s${clamped ? `（超過 ${MAX_DURATION} 秒上限，已截斷）` : ''}`, inline: true },
-            { name: '預估渲染', value: `約 ${etaSec} 秒`, inline: true },
-            { name: '這段的譜面內容', value: '```\n' + clip(sliceSource(chart.text, info.indexToTime, start, end), 950) + '\n```' },
-        )
-        .setFooter({ text: `會從第 ${combo} 個 combo 前約 ${CHART_LEAD_SEC} 秒開始播放` });
-
-    if (etaMs > MAX_RENDER_MS) {
-        // 超過耗時上限就不給渲染按鈕，只留預覽讓玩家調整參數
-        return interaction.editReply({
-            content: `❌ 這段預估要渲染約 ${etaSec} 秒，超過上限 ${Math.round(MAX_RENDER_MS / 1000)} 秒，請把 \`duration\` 調小`,
-            embeds: [embed],
-        });
-    }
-
-    chartJobs.set(interaction.user.id, { text: chart.text, name: chart.name, start, end, combo, createdAt: Date.now() });
-    await interaction.editReply({
-        embeds: [embed],
-        components: [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(CHART_RENDER_BTN).setLabel('🎬 渲染這段').setStyle(ButtonStyle.Primary),
-            new ButtonBuilder().setCustomId(CHART_CANCEL_BTN).setLabel('取消').setStyle(ButtonStyle.Secondary),
-        )],
-    });
-}
-
-async function handleChartRenderButton(interaction) {
-    const job = chartJobs.get(interaction.user.id);
-    if (!isFresh(job)) {
-        return interaction.reply({ content: '⌛ 預覽已過期，請重新 `/testchart`', flags: MessageFlags.Ephemeral });
-    }
-
-    const remain = checkCooldown(interaction.user.id);
-    if (remain > 0) {
-        return interaction.reply({
-            content: `⏳ 冷卻中，請 ${Math.ceil(remain / 1000)} 秒後再試`,
-            flags: MessageFlags.Ephemeral,
-        });
-    }
-
-    await runInteractionRender(
-        interaction, job.text, { start: job.start, end: job.end },
-        `${job.name}・從 combo #${job.combo} 開始`, null, true,
-    );
-}
-
-async function handleChartCancelButton(interaction) {
-    chartJobs.delete(interaction.user.id);
-    await interaction.update({ content: '❌ 已取消', embeds: [], components: [] });
+    await interaction.launchActivity();
 }
 
 // ============================================================

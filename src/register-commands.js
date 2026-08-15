@@ -39,27 +39,6 @@ export const commands = [
         .setName('compose')
         .setDescription('跳出多行輸入視窗，整理成可複製的 simai 區塊，並可直接渲染'),
     new SlashCommandBuilder()
-        .setName('testchart')
-        .setDescription('【測試用】渲染內建測試譜面，可從指定 combo 開始播放（先預覽範圍再渲染）')
-        .addStringOption((o) => o
-            .setName('song')
-            .setDescription('選擇譜面（可輸入關鍵字搜尋曲名）')
-            .setAutocomplete(true)
-            .setRequired(false))
-        .addIntegerOption((o) => o
-            .setName('combo')
-            .setDescription('從第幾 combo 開始（預設 1 = 開頭）')
-            .setMinValue(1))
-        .addIntegerOption((o) => o
-            .setName('count')
-            .setDescription('渲染多少個 combo（與 duration 二選一）')
-            .setMinValue(1))
-        .addNumberOption((o) => o
-            .setName('duration')
-            .setDescription('渲染多少秒（與 count 二選一；都不填預設 10 秒，最多 30）')
-            .setMinValue(2)
-            .setMaxValue(30)),
-    new SlashCommandBuilder()
         .setName('check')
         .setDescription('檢查 simai 語法（只解析不渲染，回報錯誤與 note 統計）')
         .addStringOption((o) => o
@@ -76,7 +55,12 @@ export const commands = [
     ...(process.env.ENABLE_ACTIVITY === '1' ? [
         new SlashCommandBuilder()
             .setName('play')
-            .setDescription('在文字頻道啟動互動 Activity 頁面'),
+            .setDescription('在文字頻道啟動互動 Activity 頁面')
+            .addStringOption((o) => o
+                .setName('chart')
+                .setDescription('指定要開啟的譜面（可輸入關鍵字搜尋）')
+                .setAutocomplete(true)
+                .setRequired(false)),
     ] : []),
     // 右鍵訊息 → Apps → 渲染譜面：抓訊息裡的 ```simai code block 來渲染
     new ContextMenuCommandBuilder()

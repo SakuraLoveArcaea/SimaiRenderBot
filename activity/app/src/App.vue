@@ -100,11 +100,21 @@ async function init() {
     const list = await session.fetchChartList();
     chartList.value = list;
 
+    // 檢查是否有透過 /play 指定譜面或「繼續看譜」按鈕傳遞的暫存 Session
+    const resumed = await session.fetchResumeSession(999999);
+    const targetChartId = resumed?.chartId || null;
+
     session.setStatus('連線中：正在獲取譜面資料…', 'status-connecting');
-    await chart.loadChart(fetchChartPath);
+    if (targetChartId) {
+      const data = await session.fetchChartData(targetChartId);
+      chart.loadFromText(data.text, data.name);
+      currentChartId.value = data.filename || targetChartId;
+    } else {
+      await chart.loadChart(fetchChartPath);
+      const initialChart = list.find(c => c.name === chart.chartName.value);
+      if (initialChart) currentChartId.value = initialChart.id;
+    }
     songTitleDisplay.value = chart.chartName.value;
-    const initialChart = list.find(c => c.name === chart.chartName.value);
-    if (initialChart) currentChartId.value = initialChart.id;
     logRemote('setup:chart_fetched', { name: chart.chartName.value });
 
     session.setStatus('連線中：正在載入圖片素材…', 'status-connecting');
@@ -114,21 +124,25 @@ async function init() {
     engine.initEngine();
 
     const maxComma = chart.C.value.length - 2;
-    rangeSel.initBounds(maxComma, { start: 0, end: maxComma });
+    if (resumed && typeof resumed.start === 'number' && typeof resumed.end === 'number') {
+      const safeRange = {
+        start: Math.max(0, Math.min(resumed.start, maxComma)),
+        end: Math.max(0, Math.min(resumed.end, maxComma)),
+      };
+      rangeSel.initBounds(maxComma, safeRange);
+      showMessage('↩️ 已回到訊息中那一段的位置', 'info');
+      engine.seek(chart.C.value[safeRange.start] ?? 0);
+    } else {
+      rangeSel.initBounds(maxComma, { start: 0, end: maxComma });
+      engine.seek(0);
+    }
 
     inputsEnabled.value = true;
     session.setStatus(`連線成功：${session.auth.value.user.global_name ?? session.auth.value.user.username}`, 'status-ready');
     engine.resizeCanvas();
     rangeSel.setActiveEndpoint(null);
 
-    // 若使用者是從訊息上的「繼續看譜」進來的，還原當初那一段的選取區間與播放位置
-    const resumed = await session.fetchResumeSession(maxComma);
-    if (resumed) {
-      rangeSel.initBounds(maxComma, resumed);
-      showMessage('↩️ 已回到訊息中那一段的位置', 'info');
-    }
-    engine.seek(resumed ? (chart.C.value[rangeSel.range.value.start] ?? 0) : 0);
-    logRemote('setup:complete', resumed ? { resumed: [rangeSel.range.value.start, rangeSel.range.value.end] } : undefined);
+    logRemote('setup:complete', (resumed && typeof resumed.start === 'number') ? { resumed: [resumed.start, resumed.end] } : undefined);
     setupRunning = false;
   } catch (e) {
     console.error(e);

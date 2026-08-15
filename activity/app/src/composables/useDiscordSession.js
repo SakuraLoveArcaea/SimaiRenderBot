@@ -83,14 +83,22 @@ export function useDiscordSession() {
    * 從後端取回「繼續看譜」要還原的區間（由 bot 端在按鈕被按下時暫存）。
    * 取得後套用到兩個 range 滑桿；沒有就維持預設全選。
    */
-  async function fetchResumeSession(maxComma) {
+  async function fetchResumeSession(maxComma = 999999) {
     if (standalone) return null;
     try {
       const s = await apiClient.getResumeSession(auth.value.user.id);
-      if (typeof s.startComma !== 'number' || typeof s.endComma !== 'number') return null;
-      const start = Math.max(0, Math.min(s.startComma, maxComma));
-      const end = Math.max(start, Math.min(s.endComma, maxComma));
-      return { start, end };
+      if (!s || (!s.chartId && typeof s.startComma !== 'number')) return null;
+      let start = null;
+      let end = null;
+      if (typeof s.startComma === 'number' && typeof s.endComma === 'number') {
+        start = Math.max(0, Math.min(s.startComma, maxComma));
+        end = Math.max(start, Math.min(s.endComma, maxComma));
+      }
+      return {
+        chartId: s.chartId || null,
+        start,
+        end,
+      };
     } catch (e) {
       console.warn('[Resume] 還原續看位置失敗:', e);
       return null;
