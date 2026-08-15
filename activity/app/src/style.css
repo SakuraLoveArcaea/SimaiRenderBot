@@ -481,11 +481,14 @@ header .sub {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 3px 8px;
+  padding: 2px 6px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: clamp(8.5px, 2.1vw, 10px);
   font-weight: 700;
-  letter-spacing: .02em;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  gap: 4px;
+  overflow: hidden;
 }
 
 .player-stage-badge.l {
@@ -500,32 +503,16 @@ header .sub {
   border: 1px solid rgba(255, 79, 165, 0.3);
 }
 
-.badge-player-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.btn-badge-mirror {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-  color: #fff;
-  font-size: 9px;
-  padding: 1px 5px;
-  cursor: pointer;
-  transition: all .12s ease;
-}
-
-.btn-badge-mirror:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: var(--slide);
+.player-stage-badge span {
+  white-space: nowrap;
 }
 
 .player-combo-val {
-  font-size: 10px;
+  font-size: clamp(8px, 1.9vw, 9.5px);
   font-weight: 500;
   color: var(--dim);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .player-combo-val b {
