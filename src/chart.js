@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase.js';
+import { parseMaidata, buildSimaiFromSong, DIFFICULTY_LABELS } from './maidata-parser.js';
 
 // 逗號切割／裁切純函式與前端共用
 export { sliceSource, analyzeHeader, buildCleanCutSimai } from '../engine/Scripts/simaiCut.js';
@@ -13,51 +14,68 @@ let firestoreCache = null;
 let lastCacheTime = 0;
 const CACHE_TTL_MS = 60_000; // 1 分鐘快取
 
-/** 列出所有可用譜面（優先從 Firebase Firestore，並合併本機 testChart） */
+/** 列出所有可用歌曲（包含各可用難度與等級資訊） */
 export async function listCharts() {
     const now = Date.now();
     if (firestoreCache && now - lastCacheTime < CACHE_TTL_MS) {
         return firestoreCache;
     }
 
-    const chartMap = new Map();
+    const songMap = new Map();
 
     // 1. 讀取 Firebase Firestore
     try {
         const snap = await getDocs(collection(db, 'charts'));
         snap.forEach((d) => {
             const data = d.data();
-            chartMap.set(d.id, {
+            songMap.set(d.id, {
                 id: d.id,
-                name: data.name || data.title || d.id,
-                title: data.title || data.name || d.id,
-                difficulty: data.difficulty || '',
-                bpm: data.bpm ?? null,
+                title: data.title || d.id,
+                name: data.title || d.id,
+                artist: data.artist || '',
+                bpm: data.bpm,
+                levels: data.levels || {},
+                availableDifficulties: data.availableDifficulties || Object.keys(data.inotes || {}),
                 source: 'firebase',
             });
         });
     } catch (e) {
-        console.warn('[chart.js] 從 Firebase 讀取譜面列表失敗，使用本機譜面作為備援:', e.message);
+        console.warn('[chart.js] 從 Firebase 讀取歌曲失敗:', e.message);
     }
 
-    // 2. 讀取本機 testChart/ 目錄補強
+    // 2. 讀取本機 testChart/ 目錄
     try {
-        const files = (await fs.readdir(CHART_DIR)).filter((f) => f.endsWith('.simai') || f.endsWith('.txt')).sort();
+        const files = (await fs.readdir(CHART_DIR)).filter(f => f.endsWith('.maidata') || f.endsWith('.simai') || f.endsWith('.txt')).sort();
         for (const f of files) {
-            const base = path.basename(f).replace(/\.(simai|txt)$/i, '');
-            if (!chartMap.has(base) && !chartMap.has(f)) {
-                chartMap.set(base, {
-                    id: base,
-                    name: base,
-                    title: base,
-                    difficulty: '',
-                    source: 'local',
-                });
+            const base = path.basename(f).replace(/\.(maidata|simai|txt)$/i, '');
+            if (!songMap.has(base) && !songMap.has(f)) {
+                try {
+                    const raw = await fs.readFile(path.join(CHART_DIR, f), 'utf8');
+                    const parsed = parseMaidata(raw, base);
+                    songMap.set(parsed.id || base, {
+                        id: parsed.id || base,
+                        title: parsed.title || base,
+                        name: parsed.title || base,
+                        artist: parsed.artist || '',
+                        bpm: parsed.bpm,
+                        levels: parsed.levels || {},
+                        availableDifficulties: parsed.availableDifficulties,
+                        source: 'local',
+                    });
+                } catch {
+                    songMap.set(base, {
+                        id: base,
+                        title: base,
+                        name: base,
+                        availableDifficulties: ['master'],
+                        source: 'local',
+                    });
+                }
             }
         }
     } catch {}
 
-    const result = Array.from(chartMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    const result = Array.from(songMap.values()).sort((a, b) => a.title.localeCompare(b.title));
     if (result.length > 0) {
         firestoreCache = result;
         lastCacheTime = now;
@@ -65,46 +83,47 @@ export async function listCharts() {
     return result;
 }
 
-/** 讀取指定譜面資料（依 id 或檔名，優先從 Firestore 讀取，再備援本機檔案） */
-export async function loadChart(chartId) {
-    // 1. 若有指定 ID，優先向 Firestore 查詢
-    if (chartId) {
+/** 讀取指定歌曲與難度（例如 "11943:master" 或 "11943" 帶 diff="master"） */
+export async function loadChart(songIdWithDiff, requestedDiff = null) {
+    let songId = songIdWithDiff;
+    let diff = requestedDiff;
+
+    if (songIdWithDiff && songIdWithDiff.includes(':')) {
+        const parts = songIdWithDiff.split(':');
+        songId = parts[0];
+        diff = parts[1];
+    }
+
+    // 1. 優先向 Firestore 查詢
+    if (songId) {
         try {
-            const docRef = doc(db, 'charts', chartId);
+            const docRef = doc(db, 'charts', songId);
             const snap = await getDoc(docRef);
             if (snap.exists()) {
-                const data = snap.data();
-                return {
-                    name: data.name || data.title || chartId,
-                    text: data.text,
-                    filename: `${chartId}.simai`,
-                    bpm: data.bpm,
-                };
+                const song = snap.data();
+                return buildSimaiFromSong(song, diff);
             }
         } catch (e) {
-            console.warn(`[chart.js] 從 Firebase 讀取譜面 ${chartId} 失敗，嘗試本機檔案:`, e.message);
+            console.warn(`[chart.js] Firestore 讀取 ${songId} 失敗:`, e.message);
         }
     }
 
-    // 2. 本機檔案比對（支援 id 或檔名）
+    // 2. 本機 testChart/ 查詢
     try {
-        const files = (await fs.readdir(CHART_DIR)).filter((f) => f.endsWith('.simai') || f.endsWith('.txt')).sort();
+        const files = (await fs.readdir(CHART_DIR)).filter(f => f.endsWith('.maidata') || f.endsWith('.simai') || f.endsWith('.txt'));
         if (files.length) {
             let targetFile = files[0];
-            if (chartId) {
-                const matched = files.find(f => f === chartId || path.basename(f, path.extname(f)) === chartId || f.startsWith(chartId));
+            if (songId) {
+                const matched = files.find(f => f === songId || path.basename(f, path.extname(f)) === songId || f.startsWith(songId));
                 if (matched) targetFile = matched;
             }
-            const text = (await fs.readFile(path.join(CHART_DIR, targetFile), 'utf8')).trim();
-            return {
-                name: path.basename(targetFile, path.extname(targetFile)),
-                text,
-                filename: targetFile,
-            };
+            const raw = await fs.readFile(path.join(CHART_DIR, targetFile), 'utf8');
+            const song = parseMaidata(raw, path.basename(targetFile, path.extname(targetFile)));
+            return buildSimaiFromSong(song, diff);
         }
     } catch {}
 
-    // 3. 若都找不到且沒傳 chartId，從 Firestore 取第一筆
+    // 3. 預設取第一首
     try {
         const list = await listCharts();
         if (list.length > 0) {
@@ -112,16 +131,10 @@ export async function loadChart(chartId) {
             const docRef = doc(db, 'charts', first.id);
             const snap = await getDoc(docRef);
             if (snap.exists()) {
-                const data = snap.data();
-                return {
-                    name: data.name || data.title || first.id,
-                    text: data.text,
-                    filename: `${first.id}.simai`,
-                    bpm: data.bpm,
-                };
+                return buildSimaiFromSong(snap.data(), diff);
             }
         }
     } catch {}
 
-    throw new Error(`找不到指定的譜面：${chartId || '(未指定)'}`);
+    throw new Error(`找不到指定的歌曲或譜面：${songId || '(未指定)'}`);
 }

@@ -62,16 +62,25 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.isAutocomplete()) {
             if (interaction.commandName === 'play') {
                 const focusedValue = (interaction.options.getFocused() || '').toLowerCase();
-                const charts = await listCharts();
-                const filtered = charts
-                    .filter((c) => c.name.toLowerCase().includes(focusedValue) || (c.title && c.title.toLowerCase().includes(focusedValue)))
-                    .slice(0, 25);
-                return await interaction.respond(
-                    filtered.map((c) => ({
-                        name: `${c.difficulty ? `[${c.difficulty}] ` : ''}${c.title || c.name}`.slice(0, 100),
-                        value: c.id,
-                    }))
-                );
+                const songs = await listCharts();
+                const matchedSongs = songs
+                    .filter((s) => s.title.toLowerCase().includes(focusedValue) || (s.artist && s.artist.toLowerCase().includes(focusedValue)) || s.id.toLowerCase().includes(focusedValue));
+                
+                const choices = [];
+                for (const s of matchedSongs) {
+                    const diffs = s.availableDifficulties || ['master'];
+                    for (const d of diffs) {
+                        const lv = s.levels?.[d] ? ` ${s.levels[d]}` : '';
+                        const dName = d === 're_master' ? 'Re:MAS' : d === 'utage' ? '宴' : d.toUpperCase();
+                        choices.push({
+                            name: `[${dName}${lv}] ${s.title}`.slice(0, 100),
+                            value: `${s.id}:${d}`,
+                        });
+                        if (choices.length >= 25) break;
+                    }
+                    if (choices.length >= 25) break;
+                }
+                return await interaction.respond(choices.slice(0, 25));
             }
             return;
         }

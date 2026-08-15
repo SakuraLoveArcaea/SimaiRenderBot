@@ -207,6 +207,7 @@ header h1 {
 .chart-item {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
   border-radius: 6px;
@@ -227,42 +228,92 @@ header h1 {
   font-weight: 700;
 }
 
-.chart-diff-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 4px;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-.chart-diff-badge.master {
-  background: #9b59b6;
-  color: #fff;
-}
-
-.chart-diff-badge.remaster {
-  background: #e8ecfb;
-  color: #551a8b;
-}
-
-.chart-diff-badge.expert {
-  background: #e74c3c;
-  color: #fff;
+.chart-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .chart-item-name {
-  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.chart-item-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.chart-item-artist {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .chart-item-bpm {
-  font-size: 10px;
-  color: var(--dim);
-  flex-shrink: 0;
   font-family: monospace;
+  flex-shrink: 0;
+}
+
+.chart-item-diff-pills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.chart-diff-badge-btn {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 3px 6px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: transform .1s, filter .1s;
+  white-space: nowrap;
+}
+
+.chart-diff-badge-btn:hover {
+  transform: scale(1.06);
+  filter: brightness(1.15);
+}
+
+.chart-diff-badge-btn.basic {
+  background: #2ecc71;
+  color: #fff;
+}
+
+.chart-diff-badge-btn.advanced {
+  background: #f1c40f;
+  color: #111;
+}
+
+.chart-diff-badge-btn.expert {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.chart-diff-badge-btn.master {
+  background: #9b59b6;
+  color: #fff;
+}
+
+.chart-diff-badge-btn.remaster {
+  background: #e8ecfb;
+  color: #551a8b;
+}
+
+.chart-diff-badge-btn.utage {
+  background: #e67e22;
+  color: #fff;
 }
 
 .chart-item-empty {

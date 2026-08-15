@@ -53,14 +53,14 @@ onUnmounted(() => {
 
 const filteredCharts = computed(() => {
   const list = props.chartList && props.chartList.length ? props.chartList : [
-    { id: 'チューリングの跡_master.simai', name: 'チューリングの跡_master' },
-    { id: '渦状銀河のシンフォニエッタ.simai', name: '渦状銀河のシンフォニエッタ' }
+    { id: '11943', title: 'INTJINTP...[DX]', availableDifficulties: ['master', 're_master'] }
   ];
   const q = searchQuery.value.trim().toLowerCase();
   if (!q) return list;
   return list.filter(c => 
-    (c.name && c.name.toLowerCase().includes(q)) || 
-    (c.title && c.title.toLowerCase().includes(q)) ||
+    (c.title && c.title.toLowerCase().includes(q)) || 
+    (c.name && c.name.toLowerCase().includes(q)) ||
+    (c.artist && c.artist.toLowerCase().includes(q)) ||
     (c.id && c.id.toLowerCase().includes(q))
   );
 });
@@ -95,7 +95,7 @@ const filteredCharts = computed(() => {
           <input
             v-model="searchQuery"
             type="text"
-            placeholder="🔍 搜尋譜面..."
+            placeholder="🔍 搜尋曲名 / 演出者 / 難度..."
             class="dropdown-search-input"
             autofocus
             @click.stop
@@ -106,14 +106,28 @@ const filteredCharts = computed(() => {
             v-for="c in filteredCharts"
             :key="c.id"
             class="chart-item"
-            :class="{ active: currentChart === c.id || songTitle === c.name }"
+            :class="{ active: currentChart.startsWith(c.id) || songTitle.startsWith(c.title || c.name) }"
             @click="handleSelect(c.id)"
           >
-            <span v-if="c.difficulty" class="chart-diff-badge" :class="c.difficulty.toLowerCase().replace(':', '')">
-              {{ c.difficulty }}
-            </span>
-            <span class="chart-item-name">{{ c.name || c.title }}</span>
-            <span v-if="c.bpm" class="chart-item-bpm">{{ c.bpm }} BPM</span>
+            <div class="chart-item-main">
+              <div class="chart-item-name">{{ c.title || c.name }}</div>
+              <div v-if="c.artist || c.bpm" class="chart-item-sub">
+                <span v-if="c.artist" class="chart-item-artist">{{ c.artist }}</span>
+                <span v-if="c.bpm" class="chart-item-bpm">{{ c.bpm }} BPM</span>
+              </div>
+            </div>
+            <div class="chart-item-diff-pills" @click.stop>
+              <button
+                v-for="d in (c.availableDifficulties || (c.difficulty ? [c.difficulty] : ['master']))"
+                :key="d"
+                class="chart-diff-badge-btn"
+                :class="d.toLowerCase().replace(':', '')"
+                :title="`載入 ${d.toUpperCase()}`"
+                @click="handleSelect(`${c.id}:${d}`)"
+              >
+                {{ d === 're_master' ? 'Re' : d === 'utage' ? '宴' : d.slice(0, 3).toUpperCase() }}{{ c.levels?.[d] ? ` ${c.levels[d]}` : '' }}
+              </button>
+            </div>
           </div>
           <div v-if="filteredCharts.length === 0" class="chart-item-empty">
             查無相關譜面

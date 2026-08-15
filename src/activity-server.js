@@ -392,11 +392,12 @@ async function handleListCharts(req, res) {
     }
 }
 
-/** 獲取測試譜面資料 GET /api/chart?file=... */
+/** 獲取測試譜面資料 GET /api/chart?file=... 或 ?id=...&diff=... */
 async function handleGetChart(url, req, res) {
     try {
         const reqFile = url ? (url.searchParams.get('file') || url.searchParams.get('id')) : null;
-        const chart = await loadChart(reqFile);
+        const diff = url ? url.searchParams.get('diff') : null;
+        const chart = await loadChart(reqFile, diff);
         sendJsonSuccess(res, chart);
     } catch (e) {
         console.error('[Activity Server] 讀取譜面失敗:', e);
