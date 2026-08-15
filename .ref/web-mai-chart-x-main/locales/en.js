@@ -23,6 +23,10 @@ export const en = {
         toolsFetchFromMainote: "Fetch from Mainote",
         toolsI18nEditor: "i18n Translation Editor",
         toolsPopup: "Popout Preview",
+        toolsPopupOpened: "Opened in external window",
+        toolsFindReplace: "Find & Replace",
+        toolsToggleBk: "Toggle Break (bk)",
+        toolsToggleEx: "Toggle EX (ex)",
         manageResources: "Resource Manager",
         chartInfo: "Chart Info",
         settings: "Settings",
@@ -41,7 +45,12 @@ export const en = {
         displayModeSimai: "simai Syntax",
         displayModeVisual: "Timeline",
         readyBeat: "Prep Beats",
-        timeSignature: "Time signature"
+        timeSignature: "Time signature",
+        gridDivision: "Division",
+        gridDivisionCustom: "Custom...",
+        visualToolMode: "Tool",
+        visualToolModeEdit: "Edit ✏️",
+        visualToolModeSelect: "Select ↖️"
     },
     textarea: {
         placeholder: "Enter chart data here..."
@@ -72,6 +81,7 @@ export const en = {
         setPlaybackSpeed: "Playback speed set to: {speed}x",
         resetPlaybackSpeed: "Playback speed reset",
         settingsSaved: "Settings saved",
+        panelRatioReset: "Panel ratio restored",
         restoreSaved: "Values restored (not saved yet)",
         noAudioFile: "Audio file not found",
         tagReadSuccess: "Tag read successfully: {title}",
@@ -114,6 +124,10 @@ export const en = {
             showSensorTextWhenPaused: "Show Sensor Text when Paused",
             hideBackgroundWhenPaused: "Hide BG when Paused",
             rotateStars: "Rotating Stars",
+            slideArrowHideBySensor: "Hide Slide Arrows by Sensor",
+            hideOutline: "Hide Judgment Ring",
+            showCoverWhenPaused: "Show Cover Image when Paused",
+            resetPanelRatio: "Restore Panel Ratio",
             globalVolume: "Global Volume",
             musicVolume: "Music Volume",
             SfxVolume: "SFX Volume",
@@ -126,7 +140,8 @@ export const en = {
             autoPauseOnScroll: "Auto Pause on Scroll",
             globalTimeline: "Show Global Timeline",
             enableQuickPanel: "Enable Quick Panel",
-            lang: "Language"
+            lang: "Language",
+            lowRes: "Low Resolution Mode (Limit 1x DPI for low-end devices)"
         },
         middleDisplayOpts: {
             off: "Off",
@@ -140,6 +155,7 @@ export const en = {
         cancel: "Cancel",
         close: "Close",
         reset: "Reset",
+        resetPanelRatio: "Restore Panel Ratio",
         ok: "OK",
         start: "Start",
         init: {
@@ -274,8 +290,10 @@ export const en = {
             customFps: "Custom FPS:",
             bgmVolume: "BGM Volume:",
             sfxVolume: "SFX Volume:",
-            includeAudio: "Include BGM:",
-            includeSfx: "Include SFX:"
+            includeAudio: "Include Audio:",
+            includeSfx: "Include Sound Effects:",
+            includeIntro: "Chart Loading Intro:",
+            includeAllPerfect: "Show ALL PERFECT at End:"
         },
         quickGenerate: {
             title: "Quick Generate",
@@ -309,6 +327,8 @@ export const en = {
             basicItems: [
                 `<b>Load & New</b>: Click "File" in the top-left menu to create a new project, load a folder, or read a ZIP archive.`,
                 `<b>Download</b>: Click "File > Download" in the top-left menu to download your project as a compressed package.`,
+                `<b>Panel Split & Snap Fullscreen</b>: Drag the center splitter to resize layout ratio; drag left to snap and expand editor to 100% full width.`,
+                `<b>Note Flag Toggle</b>: Use menu options "Toggle Break (bk)" or "Toggle EX (ex)" to batch toggle flags for selection or full text.`,
                 `<b>Bottom Bar</b>: Use <span class="material-symbols-outlined" translate="no">keyboard_arrow_down</span> to hide, and <span class="material-symbols-outlined" translate="no">keyboard</span> to show the virtual keyboard.`,
                 `<b>Autosave</b>: Projects autosave automatically, or you can press <span class="code-highlight">Ctrl</span><span class="code-highlight">S</span> to save.`
             ],
@@ -317,11 +337,31 @@ export const en = {
             shortcutItems: [
                 `<b>Play / Pause</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">Space</span>.`,
                 `<b>Restart</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">Backspace</span>.`,
+                `<b>Find / Replace</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">F</span> to Find, <span class="code-highlight">Ctrl</span><span class="code-highlight">H</span> to Replace.`,
                 `<b>Undo / Redo</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">Z</span> / <span class="code-highlight">Ctrl</span><span class="code-highlight">Y</span>.`,
                 `<b>Speed Up Playback</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">P</span>.`,
                 `<b>Slow Down Playback</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">O</span>.`,
                 `<b>Scale Rate</b>: <span class="code-highlight">Ctrl</span> + Mouse Wheel to zoom timeline flow velocity.`
             ]
         }
+    },
+    rpc: {
+        idleDetails: "Staring at a blank page",
+        idleState: "Idle",
+        editingDetails: "Editing: {title}",
+        difficultyState: "Difficulty: {diff}",
+        unknownDiff: "Unknown"
+    },
+    findReplace: {
+        findPlaceholder: "Find...",
+        replacePlaceholder: "Replace with...",
+        noMatches: "No matches",
+        matchCount: "{current}/{total}",
+        replaceOne: "Replace",
+        replaceAll: "Replace All",
+        toastToggleBkSelection: "Toggled Break (bk) status for selection",
+        toastToggleBkFull: "Toggled Break (bk) status for all text",
+        toastToggleExSelection: "Toggled EX (ex) status for selection",
+        toastToggleExFull: "Toggled EX (ex) status for all text"
     }
 };

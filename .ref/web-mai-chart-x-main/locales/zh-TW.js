@@ -23,6 +23,10 @@ export const zhTW = {
         toolsFetchFromMainote: "從Mainote抓取資料",
         toolsI18nEditor: "多語言編輯器",
         toolsPopup: "預覽彈出",
+        toolsPopupOpened: "已在外部視窗開啟",
+        toolsFindReplace: "尋找與取代",
+        toolsToggleBk: "切換/加入 Break (bk)",
+        toolsToggleEx: "切換/加入 EX (ex)",
         manageResources: "資源管理",
         chartInfo: "譜面資訊",
         settings: "設定",
@@ -41,7 +45,12 @@ export const zhTW = {
         displayModeSimai: "simai 語法",
         displayModeVisual: "軌道",
         readyBeat: "預備拍",
-        timeSignature: "拍號"
+        timeSignature: "拍號",
+        gridDivision: "切分",
+        gridDivisionCustom: "自訂...",
+        visualToolMode: "模式",
+        visualToolModeEdit: "編輯 ✏️",
+        visualToolModeSelect: "選擇 ↖️"
     },
     textarea: {
         placeholder: "在此輸入譜面資料..."
@@ -72,6 +81,7 @@ export const zhTW = {
         setPlaybackSpeed: "已設定播放速度：{speed}x",
         resetPlaybackSpeed: "重置播放速度",
         settingsSaved: "設定已儲存",
+        panelRatioReset: "已還原面板比例",
         restoreSaved: "數值已還原（尚未儲存）",
         noAudioFile: "找不到音訊檔案",
         tagReadSuccess: "成功讀取標籤：{title}",
@@ -114,6 +124,10 @@ export const zhTW = {
             showSensorTextWhenPaused: "暫停時顯示感應器文字",
             hideBackgroundWhenPaused: "暫停時隱藏背景",
             rotateStars: "星星旋轉",
+            slideArrowHideBySensor: "滑星依感應器消失",
+            hideOutline: "隱藏判定圈",
+            showCoverWhenPaused: "暫停時顯示封面圖",
+            resetPanelRatio: "還原面板比例",
             globalVolume: "全局音量",
             musicVolume: "音樂音量",
             SfxVolume: "音效音量",
@@ -126,7 +140,10 @@ export const zhTW = {
             autoPauseOnScroll: "滾動時自動暫停",
             globalTimeline: "顯示全域時間軸",
             enableQuickPanel: "啟用快速面板",
-            lang: "語言 / Language"
+            lang: "語言 / Language",
+            drawHitEffect: "渲染擊打特效",
+            drawHanabiEffect: "渲染煙火特效",
+            lowRes: "低解析度模式 (限制 1x DPI 以提升低階裝置效能)"
         },
         middleDisplayOpts: {
             off: "關閉",
@@ -140,6 +157,7 @@ export const zhTW = {
         cancel: "取消",
         close: "關閉",
         reset: "重置數值",
+        resetPanelRatio: "還原面板比例",
         ok: "確定",
         start: "開始",
         init: {
@@ -203,7 +221,7 @@ export const zhTW = {
             title: "從 Mainote 抓取譜面",
             songTitle: "歌曲名稱",
             songTitlePlaceholder: "模糊搜尋...",
-            level: "難度等級",
+            level: "等級",
             difficulty: "難度",
             version: "版本",
             category: "分類",
@@ -275,7 +293,9 @@ export const zhTW = {
             bgmVolume: "BGM 音量:",
             sfxVolume: "SFX 音量:",
             includeAudio: "包含音訊:",
-            includeSfx: "包含打擊音效:"
+            includeSfx: "包含打擊音效:",
+            includeIntro: "譜面載入動畫:",
+            includeAllPerfect: "影片結尾顯示 ALL PERFECT:"
         },
         quickGenerate: {
             title: "快速生成",
@@ -309,6 +329,8 @@ export const zhTW = {
             basicItems: [
                 `<b>檔案讀取與新建</b>：點擊左上角 <span class="material-symbols-outlined" translate="no">menu</span>選單中「檔案」來新建專案、讀取資料夾或 ZIP 壓縮檔`,
                 `<b>下載</b>：點擊左上角 <span class="material-symbols-outlined" translate="no">menu</span>選單中「檔案 > 下載」可以將專案以壓縮形式下載下來`,
+                `<b>面板分割與 Snap 滿版</b>：拖曳中央分割線調整左右比例；向左拖動到底可隱藏預覽區並全展開編輯器。`,
+                `<b>音符旗標切換</b>：透過選單「切換/加入 Break (bk)」或「EX (ex)」可快速批次切換選取範圍或全文音符旗標。`,
                 `<b>底部功能列</b>：<span class="material-symbols-outlined" translate="no">keyboard_arrow_down</span>隱藏此列、<span class="material-symbols-outlined" translate="no">keyboard</span>顯示鍵盤`,
                 `<b>專案擁有自動保存功能、也可以<span class="code-highlight">Ctrl</span><span class="code-highlight">S</span>保存</b>`
             ],
@@ -317,12 +339,32 @@ export const zhTW = {
             shortcutItems: [
                 `<b>播放 / 暫停</b>：<span class="code-highlight">Ctrl</span><span class="code-highlight">Space</span>。`,
                 `<b>從頭開始</b>：<span class="code-highlight">Ctrl</span><span class="code-highlight">Backspace</span>。`,
-                `<b>復原 / 重做</b>：<span class="code-highlight">Ctrl</span><span class="code-highlight">Z</span> / <span class="code-highlight">Ctrl</span><span class="code-highlight">Y</span>`,
-                `<b>加速播放</b>：<span class="code-highlight">Ctrl</span><span class="code-highlight">P</span>`,
-                `<b>減速播放</b>：<span class="code-highlight">Ctrl</span><span class="code-highlight">O</span>`,
+                `<b>尋找 / 取代</b>：<span class="code-highlight">Ctrl</span><span class="code-highlight">F</span> 尋找、<span class="code-highlight">Ctrl</span><span class="code-highlight">H</span> 尋找與取代。`,
+                `<b>復原 / 重做</b>：<span class="code-highlight">Ctrl</span><span class="code-highlight">Z</span> / <span class="code-highlight">Ctrl</span><span class="code-highlight">Y</span>。`,
+                `<b>加速播放</b>：<span class="code-highlight">Ctrl</span><span class="code-highlight">P</span>。`,
+                `<b>減速播放</b>：<span class="code-highlight">Ctrl</span><span class="code-highlight">O</span>。`,
                 `<b>縮放倍率</b>：<span class="code-highlight">Ctrl</span> + 滑鼠滾輪 縮放編輯器/預覽軸流速。`,
                 `<b>快速面板</b>：在設定開啟後按<span class="code-highlight">Ctrl</span><span class="code-highlight">Shift</span> 並將滑鼠移向欲執行的功能，再放開<span class="code-highlight">Ctrl</span><span class="code-highlight">Shift</span>。`
             ]
         }
+    },
+    rpc: {
+        idleDetails: "正在對著白紙發呆",
+        idleState: "閒置中",
+        editingDetails: "正在編輯: {title}",
+        difficultyState: "難度: {diff}",
+        unknownDiff: "未知難度"
+    },
+    findReplace: {
+        findPlaceholder: "尋找內容...",
+        replacePlaceholder: "取代為...",
+        noMatches: "無匹配結果",
+        matchCount: "{current}/{total}",
+        replaceOne: "取代",
+        replaceAll: "全部取代",
+        toastToggleBkSelection: "已切換選取範圍的 Break (bk) 狀態",
+        toastToggleBkFull: "已切換全文的 Break (bk) 狀態",
+        toastToggleExSelection: "已切換選取範圍的 EX (ex) 狀態",
+        toastToggleExFull: "已切換全文的 EX (ex) 狀態"
     }
 };

@@ -1,4 +1,5 @@
 import { idbGet, idbSet } from "./indexDB.js";
+export { audioManager } from "./audioManager.js";
 
 export const
     scaleBase = 100,
@@ -16,7 +17,7 @@ const baseURL = './Skin/', baseImageKeys = [
     'tap', 'tap_break', 'tap_each', 'tap_ex', 'tap_mine',
     'NormalArc', 'BreakArc', 'EachArc', 'SlideArc', 'MineArc',
     'hold', 'hold_break', 'hold_each', 'hold_ex', 'hold_mine',
-    'hold_break_on', 'hold_each_on', 'hold_on',
+    'hold_break_on', 'hold_each_on', 'hold_on', 'hold_off',
     'Hold_End', 'Hold_Break_End', 'Hold_Each_End', 'Hold_Mine_End',
     'touch', 'touch_each', 'touch_mine', 'touch_point', 'touch_point_each', 'touch_point_mine',
     'touch_border_2', 'touch_border_3', 'touch_border_2_each', 'touch_border_3_each', 'touch_border_2_mine', 'touch_border_3_mine',
@@ -24,6 +25,7 @@ const baseURL = './Skin/', baseImageKeys = [
     'star_double', 'star_pink_double', 'star_break_double', 'star_each_double', 'star_ex_double', 'star_mine_double',
     'slide', 'slide_each', 'slide_break', 'slide_mine',
     'touchhold_0', 'touchhold_1', 'touchhold_2', 'touchhold_3', 'touchhold_border',
+    'touch_just', 'touchhold_off', 'ColorBall',
     'touchhold_0_mine', 'touchhold_1_mine', 'touchhold_2_mine', 'touchhold_3_mine', 'touchhold_border_mine',
 ];
 const wifiPrefixes = ['wifi_', 'wifi_break_', 'wifi_each_', 'wifi_mine_'];
@@ -35,13 +37,18 @@ export const exColor = {
     break: '#EBBA63',
 };
 export function drawImgAtcenter(ctx, img, size, offsetX = 0, offsetY = 0, imgWidthMul = 1, imgHeightMul = 1) {
-    ctx.drawImage(
-        img,
-        -size / 2 * imgWidthMul + offsetX,
-        -size / 2 * imgHeightMul + offsetY,
-        size * imgWidthMul,
-        size * imgHeightMul
-    );
+    if (!img || typeof img === 'string') return;
+    try {
+        ctx.drawImage(
+            img,
+            -size / 2 * imgWidthMul + offsetX,
+            -size / 2 * imgHeightMul + offsetY,
+            size * imgWidthMul,
+            size * imgHeightMul
+        );
+    } catch (e) {
+        console.warn('drawImgAtcenter 繪製失敗:', e);
+    }
 }
 export function getButton(action, type = "control") {
     return document.querySelector(`${type === "control" ? "#playControls .controlButton" : "#topUtilityBtns .utilityButton"}[data-buttonAction="${action}"]`);
@@ -333,611 +340,6 @@ export const visualNoteRefPos = Array.from({ length: 8 }, (_, i) => {
         x: (3.5 - i) * innerCirleBase / 4,
     };
 });
-class AudioManager {
-    constructor() {
-        this.globalGain = 0.65; // 預設音量
-        this.bgmVolume = 0.8;
-        this.sfxMasterVolume = 0.5;
-
-        // 初始化 Web Audio 上下文與節點
-        this.reinitContext();
-
-        this.bufferMap = new Map();
-        this.playingSources = new Map();
-
-        this.soundQueue = [];
-        this.lastQueuedTimes = new Map();
-        this.MIN_INTERVAL = 15;
-
-        this.bgmBuffer = null;
-        this.bgmSource = null;
-        this.bgmStartTime = 0; // 紀錄是在全域時間第幾秒按下播放的
-        this.bgmOffset = 0;    // 紀錄是從歌曲的第幾秒開始播的
-        this.playbackRate = 1.0;
-
-        this.soundFiles = {
-            'clock': './Sounds/clock.wav',
-            'judge': './Sounds/judge.wav',
-            'judge_ex': './Sounds/judge_ex.wav',
-            'judge_break': './Sounds/judge_break.wav',
-            'answer': './Sounds/answer.wav',
-            'break': './Sounds/break.wav',
-            'slide': './Sounds/slide.wav',
-            'break_slide_start': './Sounds/break_slide_start.wav',
-            'judge_break_slide': './Sounds/judge_break_slide.wav',
-            'touch': './Sounds/touch.wav',
-            'hanabi': './Sounds/hanabi.wav',
-            'touchHold_riser': './Sounds/touchHold_riser.wav'
-        };
-
-        this.sfxVolumes = {
-            'clock': 0.8,
-            'answer': 1,
-            'judge': 0.4,
-            'judge_ex': 0.4,
-            'judge_break': 0.4,
-            'judge_break_slide': 0.4,
-            'break': 0.4,
-            'slide': 0.4,
-            'break_slide_start': 0.4,
-            'touch': 0.4,
-            'hanabi': 0.6,
-        };
-
-        this.activeLongSounds = new Map();
-        this.loopPoints = {
-            'touchHold_riser': { start: 10, end: 11.8 }
-        };
-        this.scheduledSources = [];
-
-        // 追蹤時間以實施重試節流 (Throttle)
-        this.lastResumeAttemptTime = 0;
-        this.lastReinitTime = 0;
-    }
-
-    /**
-     * 重新初始化 AudioContext，主要用於裝置故障、關閉重啟等防禦性復原
-     */
-    reinitContext() {
-        const now = Date.now();
-        if (typeof window !== 'undefined') {
-            window.__lastAudioReinitTime = window.__lastAudioReinitTime || 0;
-            // 限制每 5 秒最多只能重建一次 AudioContext，防止在無可用裝置或 HMR 重載時陷入無窮重試
-            if (now - window.__lastAudioReinitTime < 5000) {
-                return;
-            }
-            window.__lastAudioReinitTime = now;
-        }
-
-        try {
-            if (this.ctx) {
-                try {
-                    this.ctx.close();
-                } catch (e) {}
-            }
-
-            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            this.ctx = new AudioContextClass();
-
-            // 建立總音量控制節點
-            this.masterGain = this.ctx.createGain();
-            this.masterGain.gain.value = this.globalGain;
-            this.masterGain.connect(this.ctx.destination);
-
-            // BGM Gain 節點
-            this.bgmGainNode = this.ctx.createGain();
-            this.bgmGainNode.connect(this.masterGain);
-            this.bgmGainNode.gain.value = this.bgmVolume;
-
-            // SFX Master Gain 節點
-            this.sfxGainNode = this.ctx.createGain();
-            this.sfxGainNode.connect(this.masterGain);
-            this.sfxGainNode.gain.value = this.sfxMasterVolume;
-
-            // Long Sound Gain 節點
-            this.longSoundGainNode = this.ctx.createGain();
-            this.longSoundGainNode.gain.value = 0.25;
-
-            // DynamicsCompressorNode
-            this.longSoundCompressor = this.ctx.createDynamicsCompressor();
-            const nowTime = this.ctx.currentTime;
-            this.longSoundCompressor.threshold.setValueAtTime(-16, nowTime);
-            this.longSoundCompressor.knee.setValueAtTime(8, nowTime);
-            this.longSoundCompressor.ratio.setValueAtTime(4, nowTime);
-            this.longSoundCompressor.attack.setValueAtTime(0.005, nowTime);
-            this.longSoundCompressor.release.setValueAtTime(0.25, nowTime);
-
-            this.longSoundGainNode.connect(this.longSoundCompressor);
-            this.longSoundCompressor.connect(this.sfxGainNode);
-
-            this.ctx.addEventListener('statechange', () => {
-                console.log(`[Audio] AudioContext state changed to: ${this.ctx.state}`);
-            });
-        } catch (e) {
-            console.error('[Audio] Failed to initialize AudioContext:', e);
-        }
-    }
-
-    /**
-     * 防禦性確認 AudioContext 狀態並嘗試重啟或解鎖
-     */
-    ensureContextSync() {
-        if (!this.ctx || this.ctx.state === 'closed') {
-            console.warn('[Audio] AudioContext is null or closed. Re-initializing...');
-            this.reinitContext();
-            return;
-        }
-        if (this.ctx && this.ctx.state === 'suspended') {
-            const now = Date.now();
-            if (typeof window !== 'undefined') {
-                window.__lastAudioResumeAttemptTime = window.__lastAudioResumeAttemptTime || 0;
-                // 限制每 3 秒最多只能嘗試一次 resume()，防止音訊硬體故障或多實體併發時狀態反覆變更造成無窮迴圈
-                if (now - window.__lastAudioResumeAttemptTime > 3000) {
-                    window.__lastAudioResumeAttemptTime = now;
-                    console.log('[Audio] AudioContext is suspended. Attempting to resume...');
-                    this.ctx.resume().catch((err) => {
-                        console.warn('[Audio] Failed to resume AudioContext:', err);
-                    });
-                }
-            } else {
-                if (!this.lastResumeAttemptTime || now - this.lastResumeAttemptTime > 3000) {
-                    this.lastResumeAttemptTime = now;
-                    this.ctx.resume().catch((err) => {
-                        console.warn('[Audio] Failed to resume AudioContext:', err);
-                    });
-                }
-            }
-        }
-    }
-
-    /**
-     * 設定並載入背景音樂 (支援 URL 或 Blob/File)
-     * @param {string|Blob} source - 音訊來源
-     * @param {File} originalFile - 原始 File 對象 (用於導出時保留檔案名和二進制數據)
-     */
-    async setBackgroundMusic(source, originalFile = null) {
-        this.ensureContextSync();
-        try {
-            // 優先保存原始 File 對象，否則保存來源
-            this.bgmFile = originalFile || source;
-
-            let arrayBuffer;
-            if (source instanceof Blob) {
-                arrayBuffer = await source.arrayBuffer();
-            } else {
-                const response = await fetch(source);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch BGM: HTTP ${response.status}`);
-                }
-                arrayBuffer = await response.arrayBuffer();
-            }
-
-            // 進行解碼
-            this.bgmBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-            console.log(`[Audio] BGM 載入完成，長度: ${this.bgmBuffer.duration.toFixed(2)}s`);
-        } catch (e) {
-            console.error(`[Audio] BGM 載入失敗`, e);
-        }
-    }
-
-    async removeBackgroundMusic() {
-        this.stopBGM();
-        this.bgmBuffer = null;
-        this.bgmFile = null;
-    }
-
-    haveBGM() {
-        return !!this.bgmBuffer;
-    }
-
-    getBGMFile() {
-        // 如果背景音樂是 File/Blob，直接回傳；若是 URL，嘗試從 gain node 下載或回傳 null
-        // 主要用於「打包/儲存當前背景音樂」需求。
-        if (this.bgmFile instanceof Blob) {
-            return this.bgmFile;
-        }
-
-        // 如果是 URL 字串，無法直接回傳 Blob，但我們可提供可下載的 URL
-        if (typeof this.bgmFile === 'string') {
-            return this.bgmFile; // 由呼叫端自行處理 fetch/Blob 轉換
-        }
-
-        return null;
-    }
-
-    /**
-    * 調整 BGM 音量 (0.0 到 1.0)
-    */
-    setBGMVolume(value) {
-        this.ensureContextSync();
-        this.bgmVolume = Math.max(0, Math.min(1, value));
-        this.bgmGainNode.gain.setTargetAtTime(this.bgmVolume, this.ctx.currentTime, 0.05);
-    }
-
-    /**
-     * 設定背景音樂播放速率
-     * @param {number} rate - 播放速率（例如 1.0、1.5、0.75）
-     */
-    setPlaybackRate(rate) {
-        this.ensureContextSync();
-        this.playbackRate = Math.max(0.1, Math.min(4, Number(rate) || 1));
-        if (this.bgmSource) {
-            // 使用 .setTargetAtTime 防止速率突變造成耳朵不適
-            this.bgmSource.playbackRate.setTargetAtTime(this.playbackRate, this.ctx.currentTime, 0.05);
-        }
-    }
-
-    /**
- * 播放背景音樂
- * @param {number} startTime - 從歌曲的第幾秒開始 (對應 globalTime)
- * @param {number} volume - 音量 (0.0 到 1.0)
- */
-    playBGM(startTime = 0, volume = 1) {
-        if (!this.bgmBuffer) return;
-        this.ensureContextSync();
-        this.stopBGM();
-
-        this.bgmSource = this.ctx.createBufferSource();
-        this.bgmSource.buffer = this.bgmBuffer;
-
-        // --- 關鍵：套用當前速率 ---
-        this.bgmSource.playbackRate.value = this.playbackRate;
-
-        const sourceGain = this.ctx.createGain();
-        sourceGain.gain.value = typeof volume === 'number' ? Math.max(0, Math.min(1, volume)) : this.bgmVolume;
-        this.bgmSource.connect(sourceGain);
-        sourceGain.connect(this.bgmGainNode);
-
-        if (this.ctx.state === 'suspended') this.ctx.resume();
-
-        this.bgmStartTime = this.ctx.currentTime;
-        this.bgmOffset = Math.max(0, startTime);
-
-        this.bgmSource.start(0, this.bgmOffset);
-    }
-
-    /**
-     * 停止背景音樂
-     */
-    stopBGM() {
-        this.stopAllScheduledSounds();
-        if (this.bgmSource) {
-            try {
-                this.bgmSource.stop();
-            } catch (e) {
-                // 防止 Source 尚未 start 就呼叫 stop 導致報錯
-            }
-            this.bgmSource = null;
-        }
-    }
-
-    stopAllScheduledSounds() {
-        for (const src of this.scheduledSources) {
-            try {
-                src.stop();
-            } catch (e) { }
-        }
-        this.scheduledSources = [];
-    }
-
-    /**
- * 取得目前 BGM 播放的精確秒數 (同步核心)
- */
-    getBGMTime() {
-        if (!this.bgmSource || this.ctx.state === 'suspended') return null;
-
-        // 公式：((現在時間 - 開始時間) * 播放速率) + 起始偏移量
-        const elapsedContextTime = this.ctx.currentTime - this.bgmStartTime;
-        return (elapsedContextTime * this.playbackRate) + this.bgmOffset;
-    }
-
-    getBGMDuration() {
-        return this.bgmBuffer ? this.bgmBuffer.duration : 0;
-    }
-
-    /**
-     * 動態調整全域音量 (0.0 到 1.0)
-     */
-    setGlobalVolume(value) {
-        this.ensureContextSync();
-        this.globalGain = Math.max(0, Math.min(1, value));
-        // 使用 exponentialRamp 讓音量調整聽起來更自然，且防止爆音
-        this.masterGain.gain.setTargetAtTime(this.globalGain, this.ctx.currentTime, 0.05);
-    }
-
-    setSFXVolume(value) {
-        this.ensureContextSync();
-        this.sfxMasterVolume = Math.max(0, Math.min(1, value));
-        // 使用 exponentialRamp 讓音量調整聽起來更自然，且防止爆音
-        this.sfxGainNode.gain.setTargetAtTime(this.sfxMasterVolume, this.ctx.currentTime, 0.05);
-    }
-
-    setSFXVolumes(volumes) {
-        for (const [key, vol] of Object.entries(volumes)) {
-            if (this.sfxVolumes[key] !== undefined) {
-                this.sfxVolumes[key] = Math.max(0, Math.min(1, vol));
-            }
-        }
-    }
-
-    /**
-     * 初始化並預載入所有音效，支援進度回報
-     * @param {Function} onProgress - 回傳 (目前百分比, 當前 Key)
-     */
-    async init(onProgress) {
-        this.ensureContextSync();
-        const keys = Object.keys(this.soundFiles);
-        const total = keys.length;
-        let loaded = 0;
-
-        const loadTasks = Object.entries(this.soundFiles).map(async ([key, url]) => {
-            try {
-                let arrayBuffer = await idbGet(`sfx_cache_${key}`);
-
-                if (!arrayBuffer) {
-                    const response = await fetch(url);
-                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                    arrayBuffer = await response.arrayBuffer();
-                    await idbSet(`sfx_cache_${key}`, arrayBuffer);
-                }
-
-                const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer.slice(0));
-                this.bufferMap.set(key, audioBuffer);
-            } catch (e) {
-                console.error(`[Audio] ${key} 載入失敗:`, e);
-            } finally {
-                // 無論成功或失敗，都增加進度
-                loaded++;
-                if (onProgress) onProgress((loaded / total) * 100, key);
-            }
-        });
-
-        await Promise.all(loadTasks);
-    }
-
-    /**
-     * 將音效加入佇列，包含重複攔截邏輯
-     * @param {Object} note - 譜面音符物件
-     * @param {number} targetTime - 預計發聲的 globalTime (秒)
-     */
-    queueSoundSingle(sample, targetTime) {
-        //const now = performance.now();
-        this._checkAndPush(sample, targetTime, true, this.sfxVolumes[sample]);
-    }
-    queueSound(note, targetTime) {
-        const now = performance.now();
-
-        // --- 攔截 A: 防止同一個物件在短時間內重複進入 ---
-        if (note._lastQueued && (now - note._lastQueued < this.MIN_INTERVAL)) return;
-        note._lastQueued = now;
-
-        // 透過 helper 產生事件清單，之後透過 _checkAndPush 實際 push
-        const events = this.getSfxEventsForNote(note, targetTime);
-        for (const ev of events) {
-            this._checkAndPush(ev.key, ev.time, ev.isMono, ev.volume);
-        }
-    }
-
-    /**
-     * 產生單一 note 在指定時間應該觸發的 SFX 事件（不會直接推入佇列）
-     * 回傳陣列：{ key, time, isMono, volume }
-     */
-    getSfxEventsForNote(note, targetTime) {
-        const events = [];
-        let key = 'judge';
-        let isMono = true;
-
-        switch (note.type) {
-            case 'tap':
-                if (note.isEx) key = 'judge_ex';
-                if (note.isBreak) {
-                    key = 'judge_break';
-                    events.push({ key: 'break', time: targetTime, isMono: true, volume: this.sfxVolumes['break'] });
-                }
-                events.push({ key: 'answer', time: targetTime, isMono: false, volume: this.sfxVolumes['answer'] });
-                break;
-            case 'hold':
-                events.push({ key: 'answer', time: targetTime, isMono: false, volume: this.sfxVolumes['answer'] });
-                if (!note._startEffectPlayed) {
-                    if (note.isBreak) {
-                        key = 'judge_break';
-                        events.push({ key: 'break', time: targetTime, isMono: true, volume: this.sfxVolumes['break'] });
-                    } else {
-                        if (note.isEx) key = 'judge_ex';
-                        else key = 'judge';
-                    }
-                    isMono = false;
-                } else {
-                    return events;
-                }
-                break;
-            case 'touch':
-                key = 'touch';
-                isMono = false;
-                events.push({ key: 'answer', time: targetTime, isMono: false, volume: this.sfxVolumes['answer'] });
-                if (note.isHanabi) {
-                    if (note.holdDuration >= 0) {
-                        if (note._startEffectPlayed) {
-                            key = 'hanabi';
-                            isMono = true;
-                        } else {
-                            return events;
-                        }
-                    } else {
-                        key = 'hanabi';
-                        isMono = true;
-                    }
-                }
-                if (note._startEffectPlayed && !note.isHanabi) return events;
-                break;
-            case 'slide':
-                if (!note._startEffectPlayed && note.isBreak) {
-                    events.push({ key: 'break_slide', time: targetTime, isMono: true, volume: this.sfxVolumes['break_slide'] });
-                    key = 'break_slide_start';
-                    isMono = false;
-                } else {
-                    if (note.isBreak) {
-                        key = 'judge_break_slide';
-                        isMono = false;
-                    } else {
-                        key = 'slide';
-                        isMono = false;
-                    }
-                }
-                break;
-            default:
-                return events;
-        }
-
-        events.push({ key, time: targetTime, isMono, volume: this.sfxVolumes[key] });
-        return events;
-    }
-
-    /**
-     * 內部檢查冷卻時間並推入佇列
-     */
-    _checkAndPush(key, targetTime, isMono, volume = 1) {
-        const now = performance.now();
-        const lastTime = this.lastQueuedTimes.get(key) || 0;
-
-        // --- 攔截 B: 防止機槍音 (15ms 內同類音效不重複觸發) ---
-        if (now - lastTime < this.MIN_INTERVAL) return;
-
-        this.lastQueuedTimes.set(key, now);
-        this.soundQueue.push({ key, targetTime, isMono, volume });
-
-        // 確保佇列按時間順序排列 (雖然 push 通常就是順序的)
-        this.soundQueue.sort((a, b) => a.targetTime - b.targetTime);
-        //console.log(`[Audio] 已加入佇列: ${key} 預計時間: ${targetTime.toFixed(2)}s (目前佇列長度: ${this.soundQueue.length})`, this.soundQueue);
-    }
-
-    /**
-     * 在遊戲 Loop (requestAnimationFrame) 中呼叫，處理播放
-     * @param {number} globalTime - 目前遊戲運行的時間 (秒)
-     */
-    update(globalTime) {
-        const lookAhead = 0.1; // 100ms look-ahead
-        while (this.soundQueue.length > 0 && globalTime + lookAhead >= this.soundQueue[0].targetTime) {
-            const { key, isMono, volume, targetTime } = this.soundQueue.shift();
-            const playTime = this.ctx.currentTime + (targetTime - globalTime) / this.playbackRate;
-            this.play(key, isMono, volume, playTime);
-        }
-    }
-
-    /**
-     * 執行最終播放 (Web Audio API 核心)
-     */
-    play(key, isMono = false, volume = 1, playTime = null) {
-        this.ensureContextSync();
-        const buffer = this.bufferMap.get(key);
-        if (!buffer) return;
-
-        // Mono 模式處理 (預約在未來新音效開始播放時才中斷舊音效，避免提早中斷產生靜音間隙)
-        if (isMono && this.playingSources.has(key)) {
-            try {
-                const oldSource = this.playingSources.get(key);
-                const stopTime = playTime !== null ? Math.max(this.ctx.currentTime, playTime) : this.ctx.currentTime;
-                oldSource.stop(stopTime);
-            } catch (e) { }
-        }
-
-        const source = this.ctx.createBufferSource();
-        source.buffer = buffer;
-
-        // --- 關鍵修正：建立一個 GainNode 來控制這次播放的音量 ---
-        const gainNode = this.ctx.createGain();
-        gainNode.gain.value = volume; // 設定傳入的音量 (0.0 到 1.0)
-
-        // 連接節點：Source -> GainNode -> sfxGainNode (原本的總音效控制)
-        source.connect(gainNode);
-        gainNode.connect(this.sfxGainNode);
-        // ---------------------------------------------------
-
-        if (isMono) {
-            this.playingSources.set(key, source);
-        }
-
-        if (playTime !== null) {
-            const timeToPlay = Math.max(this.ctx.currentTime, playTime);
-            source.start(timeToPlay);
-            this.scheduledSources.push(source);
-            source.onended = () => {
-                const index = this.scheduledSources.indexOf(source);
-                if (index !== -1) {
-                    this.scheduledSources.splice(index, 1);
-                }
-            };
-        } else {
-            source.start(0);
-        }
-    }
-    /**
-         * @param {string} id 唯一標籤 (建議用 note_pos_time)
-         * @param {string} key 音效標籤
-         * @param {number} offset 從音訊檔的第幾秒開始播放
-         */
-    startLongSound(id, key, offset = 0) {
-        const buffer = this.bufferMap.get(key);
-        const loop = this.loopPoints[key];
-        if (!buffer || this.activeLongSounds.has(id)) return;
-
-        const source = this.ctx.createBufferSource();
-        source.buffer = buffer;
-
-        let startTimeWithinBuffer = offset;
-
-        if (loop) {
-            source.loop = true;
-            source.loopStart = loop.start;
-            source.loopEnd = loop.end;
-
-            // 核心邏輯：計算循環偏移量
-            if (offset >= loop.end) {
-                const loopDuration = loop.end - loop.start;
-                // 算出在循環區間內跑了多久
-                const timeInsideLoop = (offset - loop.end) % loopDuration;
-                startTimeWithinBuffer = loop.start + timeInsideLoop;
-            }
-        } else {
-            // 如果沒設定 Loop，且 Offset 超過長度，就不播了
-            if (offset >= buffer.duration) return;
-        }
-
-        const gainNode = this.ctx.createGain();
-        source.connect(gainNode);
-        gainNode.connect(this.longSoundGainNode);
-
-        // Web Audio API 的 start(when, offset)
-        // 這裡的 startTimeWithinBuffer 必須小於 buffer.duration
-        source.start(0, Math.max(0, startTimeWithinBuffer));
-
-        this.activeLongSounds.set(id, { source, gainNode });
-    }
-
-    stopLongSound(id) {
-        if (this.activeLongSounds.has(id)) {
-            const { source, gainNode } = this.activeLongSounds.get(id);
-            // 加上極短的 fade-out 防止爆音
-            gainNode.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
-            source.stop(this.ctx.currentTime + 0.05);
-            this.activeLongSounds.delete(id);
-        }
-    }
-
-    // 暫停時清空所有長音
-    stopAllLongSounds() {
-        for (const id of this.activeLongSounds.keys()) {
-            this.stopLongSound(id);
-        }
-    }
-
-    clearSoundQueue() {
-        this.soundQueue = [];
-    }
-}
-
-// 導出實例
-export const audioManager = new AudioManager();
 
 const touchPathConfigs = {
     A: { points: [[0.31, 1.0], [0.31, 0.65], [0.15, 0.6]] },
@@ -953,7 +355,7 @@ for (let i = 1; i <= 8; i++) {
     // 這裡我們把 A/B 設在中心，D/E 設在間隔處
     const baseAngles = { A: i - 2.5, B: i - 2.5, D: i - 2, E: i - 2 };
 
-    ['A', 'B', 'D', 'E'].forEach(type => {
+    ['B', 'E', 'A', 'D'].forEach(type => {
         const path = new Path2D();
         const config = touchPathConfigs[type];
         const len = config.points.length;
@@ -1149,7 +551,6 @@ export function popupWindow({
     closeWhen,
     whenOpen
 } = {}) {
-    const setStyle = (el, styles) => Object.assign(el.style, styles);
     const popupWidth = typeof width === 'number' ? `${width}px` : width;
     const popupHeight = height ? (typeof height === 'number' ? `${height}px` : height) : 'auto';
     const popupMaxHeight = maxHeight ? (typeof maxHeight === 'number' ? `${maxHeight}px` : maxHeight) : '100vh';
@@ -1171,17 +572,8 @@ export function popupWindow({
     const createBtn = (btn, ctx) => {
         const normalized = typeof btn === 'string' ? { text: btn } : btn;
         const button = document.createElement('button');
+        button.className = 'popup-button';
         button.innerText = normalized.text ?? '按鈕';
-        setStyle(button, {
-            background: '#202020',
-            color: 'white',
-            padding: '5px 10px',
-            cursor: normalized.disabled ? 'not-allowed' : 'pointer',
-            border: '1px solid #404040',
-            borderRadius: '3px',
-            whiteSpace: 'nowrap',
-            opacity: normalized.disabled ? '0.6' : '1'
-        });
 
         button.disabled = !!normalized.disabled;
         button.onclick = () => {
@@ -1206,74 +598,43 @@ export function popupWindow({
 
     // 1. 建立背景 (Backdrop)
     const backdrop = document.createElement('div');
-    setStyle(backdrop, {
-        position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
-        background: 'rgba(0, 0, 0, 0.3)', backdropFilter: 'blur(2px)', zIndex: '50',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        opacity: '0', transition: 'opacity 0.2s ease', perspective: '800px'
-    });
+    backdrop.className = 'popup-backdrop';
 
     // 2. 建立彈窗主體 (Popup)
     const popup = document.createElement('div');
-    setStyle(popup, {
-        background: '#202020', color: 'white', padding: '15px',
-        border: '1px solid #404040', borderRadius: '5px',
-        maxWidth: maxWidth ? (typeof maxWidth === 'number' ? `${maxWidth}px` : maxWidth) : '90%',
-        width: title ? popupWidth : 'fit-content',
-        height: popupHeight,
-        maxHeight: popupMaxHeight,
-        boxShadow: '0 0 15px rgba(0, 0, 0, 0.7)',
-        position: 'relative',
-        display: 'flex',
-        flexDirection: 'column',
-        boxSizing: 'border-box',
-        overflow: 'hidden'
-    });
+    popup.className = 'popup-window';
+    popup.style.maxWidth = maxWidth ? (typeof maxWidth === 'number' ? `${maxWidth}px` : maxWidth) : '90%';
+    popup.style.width = title ? popupWidth : 'fit-content';
+    popup.style.height = popupHeight;
+    popup.style.maxHeight = popupMaxHeight;
 
     // 3. 內部組件
     const titleElem = document.createElement('h3');
-    setStyle(titleElem, { margin: '5px 0 10px 5px', minHeight: '30px', display: title ? 'flex' : 'none', alignItems: 'center', userSelect: 'none' });
+    titleElem.className = 'popup-title';
+    if (!title) titleElem.style.display = 'none';
     titleElem.innerText = title;
 
     const progressContainer = document.createElement('div');
+    progressContainer.className = 'popup-progress-container';
     const progressBar = document.createElement('div');
-    setStyle(progressContainer, { width: '100%', height: '6px', background: '#333', borderRadius: '3px', overflow: 'hidden', display: 'none', marginBottom: '10px' });
-    setStyle(progressBar, { width: '0%', height: '100%', background: '#00ffcc', transition: 'width 0.3s ease' });
+    progressBar.className = 'popup-progress-bar';
     progressContainer.appendChild(progressBar);
 
     // Scrollable content wrapper
     const bodyElem = document.createElement('div');
-    setStyle(bodyElem, {
-        flex: '1 1 auto',
-        overflowY: 'auto',
-        minHeight: '0',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '10px'
-    });
+    bodyElem.className = 'popup-body';
 
     const contentElem = document.createElement('div');
-    setStyle(contentElem, {
-        fontFamily: 'monospace', fontSize: '12px', background: '#151515',
-        padding: '10px', borderRadius: '3px', whiteSpace: 'pre-wrap',
-        display: content ? 'block' : 'none'
-    });
+    contentElem.className = 'popup-content';
     applyContent(contentElem, typeof content === 'string' ? content.trim() : content);
 
     const customContentElem = document.createElement('div');
-    setStyle(customContentElem, {
-        padding: '10px',
-        background: '#1a1a1a',
-        border: '1px solid #333',
-        borderRadius: '3px',
-        display: 'none',
-        height: "100%",
-    });
+    customContentElem.className = 'popup-custom-content';
 
     bodyElem.append(contentElem, customContentElem);
 
     const btnContainer = document.createElement('div');
-    setStyle(btnContainer, { display: 'flex', gap: '10px', marginTop: '10px', overflowX: 'auto', flexWrap: 'nowrap', flexShrink: '0' });
+    btnContainer.className = 'popup-buttons';
 
     // --- 功能函式 ---
 
@@ -1347,8 +708,8 @@ export function popupWindow({
     if (!unclosable) {
         backdrop.onclick = (e) => e.target === backdrop && closePopup();
         const closeX = document.createElement('div');
+        closeX.className = 'popup-close-btn';
         closeX.innerText = '×';
-        setStyle(closeX, { position: 'absolute', top: '10px', right: '10px', cursor: 'pointer', fontSize: '20px', color: '#aaa', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '10' });
         closeX.onclick = closePopup;
         popup.appendChild(closeX);
     }
@@ -1366,9 +727,9 @@ export function popupWindow({
     requestAnimationFrame(() => {
         backdrop.style.opacity = '1';
         popup.animate([
-            { transform: 'rotateX(30deg)', opacity: 0 },
-            { transform: 'rotateX(0deg)', opacity: 1 }
-        ], { duration: 200, easing: 'ease-out' });
+            { transform: 'rotateX(30deg) scaleY(0.75) scaleX(0.8)', opacity: 0 },
+            { transform: 'rotateX(0deg) scaleY(1) scaleX(1)', opacity: 1 }
+        ], { duration: 200, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
     });
 
     // 執行回調
@@ -1401,28 +762,8 @@ export function simpleToast({
     let container = document.getElementById('hint-container');
 
     if (!container) {
-
         container = document.createElement('div');
-
         container.id = 'hint-container';
-
-        container.style.cssText = `
-            position: fixed;
-            top: 40px;
-            left: 0;
-            padding: 10px;
-            z-index: 10000;
-
-            display: flex;
-            flex-direction: column;
-
-            pointer-events: none;
-
-            overflow: hidden;
-
-            max-height: 100vh;
-        `;
-
         document.body.appendChild(container);
     }
 
@@ -1435,9 +776,7 @@ export function simpleToast({
             .filter(v => !v._isRemoving);
 
     if (activeToasts.length >= MAX_TOASTS) {
-
         const oldest = activeToasts[0];
-
         oldest?._triggerRemove?.();
     }
 
@@ -1446,61 +785,7 @@ export function simpleToast({
     // =========================
 
     const popup = document.createElement('div');
-
-    const colorMap = {
-        info: '#00bbff',
-        error: '#ff4444',
-        success: '#00ffcc',
-        warning: '#ffcc00'
-    };
-
-    const color =
-        colorMap[type] || '#404040';
-
-    popup.style.cssText = `
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-
-        background: #202020;
-        color: white;
-
-        padding: 10px 15px;
-
-        border-left: 4px solid ${color};
-
-        border-radius: 4px;
-
-        box-shadow:
-            0 4px 12px rgba(0,0,0,0.5);
-
-        font-size: 13px;
-
-        pointer-events: auto;
-
-        width: fit-content;
-        max-width: 300px;
-
-        margin-bottom: 10px;
-
-        overflow: hidden;
-
-        min-height: 20px;
-        max-height: 100px;
-
-        flex-shrink: 0;
-
-        opacity: 1;
-
-        transform: translateX(0);
-
-        transition:
-            opacity 0.4s cubic-bezier(0.4,0,0.2,1),
-            transform 0.4s cubic-bezier(0.4,0,0.2,1),
-            max-height 0.4s cubic-bezier(0.4,0,0.2,1),
-            margin 0.4s cubic-bezier(0.4,0,0.2,1),
-            padding 0.4s cubic-bezier(0.4,0,0.2,1);
-    `;
+    popup.className = `toast-item toast-${type}`;
 
     // 安全版
     popup.textContent = content;
@@ -2449,6 +1734,80 @@ function padAudioBuffer(audioBuffer, targetLength) {
     return nb;
 }
 
+function drawAllPerfectOverlay(ctx, apT, w, h) {
+    if (apT <= 0) return;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    const cx = w / 2;
+    const cy = h / 2;
+
+    const alpha = Math.min(1, apT * 3);
+    const easeScale = Math.min(1, Math.sin(Math.min(1, apT * 2.5) * Math.PI * 0.5) * 1.1 - Math.max(0, apT * 2.5 - 1) * 0.1);
+
+    ctx.globalAlpha = alpha;
+
+    // 1. 金色背景放射光環與耀斑
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(easeScale, easeScale);
+
+    const glowGrad = ctx.createRadialGradient(0, 0, 10, 0, 0, Math.min(w, h) * 0.45);
+    glowGrad.addColorStop(0, 'rgba(255, 230, 0, 0.4)');
+    glowGrad.addColorStop(0.5, 'rgba(255, 120, 0, 0.15)');
+    glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.min(w, h) * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.rotate(apT * 0.5);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = 'rgba(255, 220, 100, 0.15)';
+    for (let k = 0; k < 8; k++) {
+        ctx.rotate(Math.PI / 4);
+        ctx.fillRect(-15, -Math.min(w, h) * 0.35, 30, Math.min(w, h) * 0.7);
+    }
+    ctx.restore();
+
+    // 2. ALL PERFECT 金色金屬立體字樣
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(easeScale, easeScale);
+
+    const fontSize = Math.min(w, h) * 0.13;
+    ctx.font = `italic 900 ${fontSize}px "title", "combo", "Inter", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const text = "ALL PERFECT";
+
+    ctx.lineWidth = fontSize * 0.15;
+    ctx.strokeStyle = '#220800';
+    ctx.strokeText(text, 0, fontSize * 0.05);
+
+    ctx.lineWidth = fontSize * 0.08;
+    ctx.strokeStyle = '#fff';
+    ctx.strokeText(text, 0, 0);
+
+    const textGrad = ctx.createLinearGradient(0, -fontSize * 0.5, 0, fontSize * 0.5);
+    textGrad.addColorStop(0, '#FFFFFF');
+    textGrad.addColorStop(0.25, '#FFF275');
+    textGrad.addColorStop(0.5, '#FFB300');
+    textGrad.addColorStop(0.85, '#FF6000');
+    textGrad.addColorStop(1, '#FFE000');
+
+    ctx.fillStyle = textGrad;
+    ctx.fillText(text, 0, 0);
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fillText(text, 0, -fontSize * 0.03);
+
+    ctx.restore();
+    ctx.restore();
+}
+
 export async function videoRender(audioManager, canvas, renderer, {
     start = 0,
     end = 0,
@@ -2460,11 +1819,14 @@ export async function videoRender(audioManager, canvas, renderer, {
     includeAudio = true,
     includeBgm = true,
     includeSfx = true,
+    includeIntro = true,
+    includeAllPerfect = true,
     musicDelay = 0,
     editorBackgroundImage = null,
     editorBackgroundVideo = null,
     notes = [],
     playScoreRes = { tap: 0, hold: 0, slide: 0, touch: 0, break: 0, score: 0, breakScore: 0, invScore: 0 },
+    chartInfo = {},
 } = {}) {
     const settings = renderer.settings || window.settings || {};
     const {
@@ -2475,6 +1837,8 @@ export async function videoRender(audioManager, canvas, renderer, {
         AudioBufferSource,
         QUALITY_HIGH
     } = window.Mediabunny;
+
+    const introDuration = includeIntro ? 6 : 0;
 
     const outlineImage = await (async () => {
         try {
@@ -2506,6 +1870,7 @@ export async function videoRender(audioManager, canvas, renderer, {
     }
 
     const mainCtx = canvas.getContext('2d');
+    const currentContext = renderer?.ctx || mainCtx;
 
     let exportVideo = null;
     let output = null;
@@ -2713,7 +2078,7 @@ export async function videoRender(audioManager, canvas, renderer, {
                         const sfxBuf = audioManager.bufferMap.get(key);
                         if (!sfxBuf) return;
                         const loop = audioManager.loopPoints[key];
-                        const finalVol = 0.5 * sfxVolume;
+                        const keyVol = audioManager.sfxVolumes[key] ?? 1.0;
                         const sfxRate = sfxBuf.sampleRate || sr;
 
                         const audibleStartSec = Math.max(s, eventStartSec);
@@ -2729,7 +2094,17 @@ export async function videoRender(audioManager, canvas, renderer, {
 
                             for (let idx = startIdx; idx < endIdx; idx++) {
                                 if (idx < 0 || idx >= outLen) continue;
-                                const timeSinceEventStart = (s + idx / sr) - eventStartSec;
+                                const currentSec = s + idx / sr;
+                                let activeCount = 0;
+                                for (const lev of longEvents) {
+                                    if (lev.key === key && currentSec >= lev.startSec && currentSec < lev.endSec) {
+                                        activeCount++;
+                                    }
+                                }
+                                if (activeCount === 0) activeCount = 1;
+
+                                const finalVol = (keyVol / activeCount) * sfxVolume;
+                                const timeSinceEventStart = currentSec - eventStartSec;
                                 let sampleSec = timeSinceEventStart;
 
                                 if (loop) {
@@ -2844,18 +2219,110 @@ export async function videoRender(audioManager, canvas, renderer, {
                 slicedAudio = mixSfxInto(slicedAudio, sfxEvents, longSoundEvents, start, end);
             }
 
+            if (!slicedAudio && includeAudio && includeSfx && introDuration > 0) {
+                const sr = 44100;
+                const totalSec = introDuration + (end - start);
+                const outLen = Math.max(1, Math.ceil(totalSec * sr));
+                slicedAudio = new AudioBuffer({ length: outLen, numberOfChannels: 2, sampleRate: sr });
+            }
+
             if (slicedAudio) {
-                // 🔴 關鍵修正：強制將採樣率轉換為 48000 Hz (Opus 編碼器要求)
+                // 🔴 關鍵修正：強制將採樣率轉換為 44100 Hz (AAC 編碼器要求)
                 slicedAudio = await resampleAudioBuffer(slicedAudio, 44100);
 
+                if (introDuration > 0) {
+                    const padAudioBufferFront = (buf, frontSeconds) => {
+                        if (!buf || frontSeconds <= 0) return buf;
+                        const sr = buf.sampleRate;
+                        const padSamples = Math.floor(frontSeconds * sr);
+                        const newLen = buf.length + padSamples;
+                        const nb = new AudioBuffer({ length: newLen, numberOfChannels: buf.numberOfChannels, sampleRate: sr });
+                        for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+                            const dst = nb.getChannelData(ch);
+                            const src = buf.getChannelData(ch);
+                            dst.set(src, padSamples);
+                        }
+                        return nb;
+                    };
+                    slicedAudio = padAudioBufferFront(slicedAudio, introDuration);
+
+                    // 🔴 在 0.0 秒處 (影片 Intro 動畫登場點) 混入 track_start.wav 音效
+                    const trackStartBuf = audioManager.bufferMap.get('track_start');
+                    if (includeSfx && trackStartBuf && slicedAudio) {
+                        const sr = slicedAudio.sampleRate;
+                        const srcRate = trackStartBuf.sampleRate || sr;
+                        const ratio = srcRate / sr;
+                        const baseVol = audioManager.sfxVolumes['track_start'] ?? 0.8;
+                        const finalVol = baseVol * sfxVolume;
+                        const maxDstSamples = Math.min(
+                            slicedAudio.length,
+                            Math.floor((trackStartBuf.length / srcRate) * sr)
+                        );
+                        for (let ch = 0; ch < slicedAudio.numberOfChannels; ch++) {
+                            const dst = slicedAudio.getChannelData(ch);
+                            const src = trackStartBuf.getChannelData(ch < trackStartBuf.numberOfChannels ? ch : 0);
+                            for (let i = 0; i < maxDstSamples; i++) {
+                                const srcPos = i * ratio;
+                                const idx0 = Math.floor(srcPos);
+                                const idx1 = idx0 + 1;
+                                if (idx0 >= src.length) break;
+                                const frac = srcPos - idx0;
+                                const s0 = src[idx0] || 0;
+                                const s1 = src[idx1] || 0;
+                                const sampleVal = s0 * (1 - frac) + s1 * frac;
+                                dst[i] += sampleVal * finalVol;
+                            }
+                        }
+                    }
+                }
+
+                // 🔴 在 end 結尾處 (最後約 2.5 秒) 混入 all_perfect.wav 音效
+                const allPerfectBuf = audioManager.bufferMap.get('all_perfect');
+                if (includeAllPerfect && includeSfx && allPerfectBuf && slicedAudio) {
+                    const sr = slicedAudio.sampleRate;
+                    const srcRate = allPerfectBuf.sampleRate || sr;
+                    const ratio = srcRate / sr;
+                    const baseVol = audioManager.sfxVolumes['all_perfect'] ?? 1.0;
+                    const finalVol = baseVol * sfxVolume;
+
+                    const bufDuration = allPerfectBuf.length / srcRate;
+                    const apStartSec = introDuration + (end - start) - Math.min(bufDuration, 2.5);
+                    const startSample = Math.max(0, Math.floor(apStartSec * sr));
+                    const maxDstSamples = Math.min(
+                        slicedAudio.length - startSample,
+                        Math.floor(bufDuration * sr)
+                    );
+
+                    if (maxDstSamples > 0) {
+                        for (let ch = 0; ch < slicedAudio.numberOfChannels; ch++) {
+                            const dst = slicedAudio.getChannelData(ch);
+                            const src = allPerfectBuf.getChannelData(ch < allPerfectBuf.numberOfChannels ? ch : 0);
+                            for (let i = 0; i < maxDstSamples; i++) {
+                                const srcPos = i * ratio;
+                                const idx0 = Math.floor(srcPos);
+                                const idx1 = idx0 + 1;
+                                if (idx0 >= src.length) break;
+                                const frac = srcPos - idx0;
+                                const s0 = src[idx0] || 0;
+                                const s1 = src[idx1] || 0;
+                                const sampleVal = s0 * (1 - frac) + s1 * frac;
+                                if (startSample + i < dst.length) {
+                                    dst[startSample + i] += sampleVal * finalVol;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // 🔴 補上靜音，使音軌長度與視訊精確對齊
-                const targetLen = Math.max(1, Math.ceil((end - start) * slicedAudio.sampleRate));
+                const totalSec = introDuration + (end - start);
+                const targetLen = Math.max(1, Math.ceil(totalSec * slicedAudio.sampleRate));
                 slicedAudio = padAudioBuffer(slicedAudio, targetLen);
             }
         }
 
         if (popup.isClosed) {
-            try { renderer.setContext(mainCtx); } catch (e) { }
+            try { renderer.setContext(currentContext); } catch (e) { }
             return;
         }
 
@@ -2907,8 +2374,9 @@ export async function videoRender(audioManager, canvas, renderer, {
             canvasIterator = mediabunnyCanvasSink.canvases(start, end);
         }
 
-        const total = end - start;
-        const frameCount = Math.max(1, Math.ceil(total * fps));
+        const introFrameCount = Math.round(introDuration * fps);
+        const gameFrameCount = Math.max(1, Math.ceil((end - start) * fps));
+        const frameCount = introFrameCount + gameFrameCount;
         const step = 1 / fps;
 
         const simaiLogicControler = new SimaiLogicControler();
@@ -2919,11 +2387,13 @@ export async function videoRender(audioManager, canvas, renderer, {
         for (let i = 0; i < frameCount; i++) {
             if (popup.isClosed) {
                 console.log('逐幀渲染已取消');
-                try { renderer.setContext(mainCtx); } catch (e) { }
+                try { renderer.setContext(currentContext); } catch (e) { }
                 return;
             }
 
-            const t = start + i * step;
+            const isIntroFrame = includeIntro && (i < introFrameCount);
+            const gameFrameIdx = i - introFrameCount;
+            const t = start + (isIntroFrame ? gameFrameIdx : i - introFrameCount) * step;
             const globalT = t - (musicDelay || 0);
 
             const {
@@ -3034,6 +2504,7 @@ export async function videoRender(audioManager, canvas, renderer, {
                 }
 
                 if (outlineImage) {
+                    const p = Math.min(width, height) / scaleBase * rs;
                     offCtx.setTransform(p, 0, 0, p, width / 2, height / 2);
                     offCtx.drawImage(outlineImage, scaleBase * -0.5 * 0.9, scaleBase * -0.5 * 0.9, scaleBase * 0.9, scaleBase * 0.9);
                 }
@@ -3054,6 +2525,18 @@ export async function videoRender(audioManager, canvas, renderer, {
                 noteQuantity,
                 playScoreRes,
             });
+
+            if (isIntroFrame) {
+                renderer.drawLoadingIntro({
+                    t: i * step,
+                    duration: introDuration,
+                    backgroundImage: editorBackgroundImage,
+                    chartInfo,
+                });
+            } else if (includeAllPerfect && t >= end - 2.5) {
+                const apT = (t - (end - 2.5)) / 2.5;
+                drawAllPerfectOverlay(offCtx, apT, width, height);
+            }
 
             const tsRelative = i * step;
             await videoSource.add(tsRelative, step);
@@ -3091,7 +2574,7 @@ export async function videoRender(audioManager, canvas, renderer, {
 
         simpleToast({ content: '逐幀渲染完成，檔案已下載', type: 'success', timeout: 2500 });
 
-        renderer.setContext(mainCtx);
+        renderer.setContext(currentContext);
         popup.setProgress(100);
         popup.setContent('完成');
 
@@ -3102,7 +2585,7 @@ export async function videoRender(audioManager, canvas, renderer, {
         console.error('逐幀渲染失敗', err);
         simpleToast({ content: '渲染失敗：' + String(err), type: 'error' });
         try { popup.setContent('錯誤：' + String(err)); } catch (e) { }
-        try { renderer.setContext(mainCtx); } catch (e) { }
+        try { renderer.setContext(currentContext); } catch (e) { }
     } finally {
         if (exportVideo && exportVideo.parentNode) {
             exportVideo.parentNode.removeChild(exportVideo);
@@ -3115,11 +2598,26 @@ export async function videoRender(audioManager, canvas, renderer, {
             }
         }
         if (mediabunnyInput) {
-            mediabunnyInput.dispose().catch(e => console.error("Error disposing Mediabunny input:", e));
+            try {
+                const res = mediabunnyInput.dispose();
+                if (res && typeof res.catch === 'function') {
+                    res.catch(e => console.error("Error disposing Mediabunny input:", e));
+                }
+            } catch (e) {
+                console.error("Error disposing Mediabunny input:", e);
+            }
         }
         if (output && output.state !== 'finalized' && output.state !== 'canceled') {
-            output.cancel().catch(e => console.error("Error cancelling output:", e));
+            try {
+                const res = output.cancel();
+                if (res && typeof res.catch === 'function') {
+                    res.catch(e => console.error("Error cancelling output:", e));
+                }
+            } catch (e) {
+                console.error("Error cancelling output:", e);
+            }
         }
+        try { renderer.setContext(currentContext); } catch (e) { }
     }
 }
 
@@ -3154,6 +2652,7 @@ export class SimaiLogicControler {
         playScoreRes,
         nowIndex,
         skipAudioQueue = false,
+        audioManager,
     }) {
         const V = visualHeight / settings.visualZoom;
         const effectDecayTime = settings.effectDecayTime;
@@ -3203,7 +2702,6 @@ export class SimaiLogicControler {
 
         let playCombo = 0;
         let playScore = 0;
-        let slideOnScreenCount = 0;
         let foundIndexForThisFrame = false;
 
         // 核心音符迴圈
@@ -3321,11 +2819,14 @@ export class SimaiLogicControler {
             const t = 1 - renderer.timeFunction(noteT * Math.abs(speedCoeff));
             const touchT = 1 - renderer.timeFunction(noteT * Math.abs(touchSpeedCoeff));
 
+            const renderSkipT = noteType === 'slide' ? ((note.slideDelay ?? 0) + (note.slideDuration ?? 0) + (note.isMine ? (note.cullSkipExtend ?? 0) : 0)) : skipT;
+            const decay = note.isHanabi ? hanabiEffectDecayTime : (noteType === 'slide' ? (note.lastSlide ? effectDecayTime : 0.05) : effectDecayTime);
+
             const isVisible =
                 (noteType === "slide" ? t >= middleDistance :
                     noteType === "touch" ? touchT >= -1 :
                         t >= -1)
-                && -noteT <= skipT + (note.isHanabi ? hanabiEffectDecayTime : (note.type === 'slide' ? 0 : effectDecayTime));
+                && -noteT <= renderSkipT + decay;
 
             const isVisualVisible = noteT >= 0
                 ? Math.abs(noteT) <= V
@@ -3334,10 +2835,7 @@ export class SimaiLogicControler {
             // 快速分類到桶子
             if (isVisible) {
                 if (noteType === 'slide') {
-                    if (slideOnScreenCount < maxSlideCount) {
-                        buckets.slide.push(note);
-                        slideOnScreenCount++;
-                    }
+                    buckets.slide.push(note);
                 } else if (noteType === 'hold' || noteType === 'tap') {
                     buckets.tapnhold.push(note);
                 } else if (noteType === 'touch') {
@@ -3356,6 +2854,13 @@ export class SimaiLogicControler {
             }
         }
 
+        if (buckets.slide.length > maxSlideCount) {
+            // 依據 Slide 實際開始滑動時間 (note.time + slideDelay) 由大到小排序 (時間靠後的在前，時間靠前的在後)
+            buckets.slide.sort((a, b) => (b.time + (b.slideDelay ?? 0)) - (a.time + (a.slideDelay ?? 0)));
+            // 優先保留時間最靠前 (陣列末尾) 的 maxSlideCount 個 Slide，裁剪掉開頭多餘的靠後 Slide
+            buckets.slide.splice(0, buckets.slide.length - maxSlideCount);
+        }
+
         const tagsLength = decodedTags.length;
         for (let i = 0; i < tagsLength; i++) {
             const tag = decodedTags[i];
@@ -3370,4 +2875,14 @@ export class SimaiLogicControler {
         this._result.nowIndex = nowIndex;
         return this._result;
     }
+}
+
+export function easeOutQuad(x) {
+    return 1 - (1 - x) * (1 - x);
+}
+export function easeInBack(x) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+
+    return c3 * x * x * x - c1 * x * x;
 }

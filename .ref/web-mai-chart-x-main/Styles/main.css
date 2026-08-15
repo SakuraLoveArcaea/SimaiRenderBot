@@ -1,31 +1,41 @@
 :root {
+    --split-ratio: 0.5;
     --utility-hidden-height: 16px;
-    --const-max-playControls-height: 130px;
-    --const-collapsed-playControls-height: 70px;
-    --playControls-height: 130px;
-    --editor-bg: #1F1F1F;
-    --top-utility-bg: #0b0b0f;
-    --top-utility-btn: #2c2c2c;
+    --const-max-playControls-height: 150px;
+    --const-collapsed-playControls-height: 90px;
+    --playControls-height: 150px;
+    --editor-background: #1F1F1F;
+    --player-background: #111;
+    --accent-color: #28f;
+    --main-color: #111;
+    --button-ouline: #2c2c2c;
+    --button-background: #1c1c1c;
+    --timeline-color: #d44;
 }
 
 @font-face {
     font-family: 'combo';
-    src: url('Fonts/Inter.ttf') format('truetype');
+    src: url('../Fonts/Inter.ttf') format('truetype');
     font-display: swap;
 }
 
 @font-face {
     font-family: 'mono';
-    src: url('Fonts/ShareTechMono-Regular.ttf') format('truetype');
+    src: url('../Fonts/ShareTechMono-Regular.ttf') format('truetype');
     font-display: swap;
 }
 
+@font-face {
+    font-family: 'title';
+    src: url('../Fonts/FOT-NewRodin\ Pro\ B.otf') format('truetype');
+    font-display: swap;
+}
 
 body {
     margin: 0;
     padding: 0;
     overflow: hidden;
-    background: #111;
+    background: var(--player-background);
 
     font-family: "Google Sans", sans-serif;
     font-optical-sizing: auto;
@@ -45,7 +55,7 @@ body {
 
 #canvasContainer {
     position: absolute;
-    width: 50%;
+    width: calc(var(--split-ratio) * 100%);
     height: calc(100% - var(--playControls-height) - 40px);
     top: 40px;
     left: 0;
@@ -117,7 +127,8 @@ body {
     height: var(--playControls-height);
     bottom: 0;
     left: 0;
-    background: var(--top-utility-bg);
+    z-index: 10;
+    background: var(--main-color);
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -127,46 +138,52 @@ body {
 #playControls #timeControl {
     appearance: none;
     -webkit-appearance: none;
-    width: 100%;
+    width: calc(100% - 16px);
     height: 10px;
-    background: linear-gradient(90deg, #962d2d 50%, #222 50%);
-    margin: 4px 0;
-    border-radius: 5px;
+    background: #222;
+    margin: 10px 8px;
+    border-radius: 7px;
     border: none;
     outline: none;
     transition: background 0.3s ease;
 }
 
+#timeControl:hover::-webkit-slider-thumb {
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+    scale: 1.3;
+}
+
 #timeControl::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 8px;
-    height: 15px;
-    background: #962d2d;
-    box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+    width: 16px;
+    height: 16px;
+    background: var(--timeline-color, #962d2d);
     border-radius: 10px;
     cursor: pointer;
+    scale: 1;
+    transition: scale 200ms ease;
 }
 
 #timeControl::-moz-range-thumb {
     appearance: none;
     -webkit-appearance: none;
-    width: 8px;
-    height: 15px;
-    background: #962d2d;
-    box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+    width: 16px;
+    height: 16px;
+    background: var(--timeline-color, #962d2d);
     border-radius: 10px;
     cursor: pointer;
+    scale: 1;
+    transition: scale 200ms ease;
 }
 
 #playControls #miniPreviewContainer {
     position: relative;
     width: 100%;
     height: 60px;
-    z-index: 10;
 }
 
 #playControls #showPlayControlsBtn {
-    background-color: var(--top-utility-bg);
+    background-color: var(--main-color);
     overflow: hidden;
     width: 30%;
     position: absolute;
@@ -187,18 +204,18 @@ body {
 }
 
 #playControls #showPlayControlsBtn:hover {
-    background-color: var(--top-utility-btn);
+    background-color: color-mix(in srgb, var(--main-color) 50%, transparent);
 }
 
 #miniPreviewContainer #miniPreview {
     background: black;
     position: absolute;
-    width: calc(100% - 4px);
+    width: calc(100% - 12px);
     height: 100%;
-    margin: 2px;
-    border: 1px solid var(--top-utility-btn);
+    margin: 0 6px;
+    border: 1px solid var(--button-ouline);
     box-sizing: border-box;
-    border-radius: 4px;
+    border-radius: 6px;
 }
 
 #miniPreviewContainer .zoomContainer {
@@ -212,11 +229,13 @@ body {
 
 #miniPreviewContainer #mpzoomOut,
 #miniPreviewContainer #mpzoomIn {
+    backdrop-filter: blur(1px);
     cursor: pointer;
     width: 30px;
     height: 30px;
-    background: var(--top-utility-bg);
-    border: 1px solid var(--top-utility-btn);
+    background: color-mix(in srgb, var(--main-color) 50%, transparent);
+    ;
+    border: 1px solid var(--button-ouline);
     border-radius: 5px;
     z-index: 5;
     color: white;
@@ -224,19 +243,19 @@ body {
     align-items: center;
     justify-content: center;
     font-size: 20px;
-    opacity: 0.6;
-    transition: opacity 100ms ease;
+    transition: background 100ms ease;
 }
 
 #miniPreviewContainer #mpzoomOut:hover,
 #miniPreviewContainer #mpzoomIn:hover {
-    opacity: 1;
+    backdrop-filter: blur(0px);
+    background: var(--main-color);
 }
 
 #playControls #playControlContainer {
     position: relative;
     width: 100%;
-    height: 60px;
+    height: 80px;
     bottom: 0;
     display: flex;
     flex-direction: column;
@@ -248,15 +267,15 @@ body {
     gap: 20px;
     align-items: center;
     justify-content: center;
+    margin-bottom: 12px;
 }
 
 .controlsContainer .controlButton {
     display: flex;
     width: 40px;
     height: 40px;
-    border: 1px solid var(--top-utility-btn);
+    /*border: 1px solid var(--top-utility-button-ouline);*/
     padding: 5px;
-    border-radius: 5px;
     color: white;
     font-size: 14px;
     cursor: pointer;
@@ -264,6 +283,48 @@ body {
     justify-content: center;
     overflow: hidden;
     box-sizing: border-box;
+}
+
+.controlsContainer .controlButton::after {
+    content: '';
+    border-radius: 10px;
+    width: 40px;
+    height: 40px;
+    position: absolute;
+    background: transparent;
+    z-index: -1;
+    transition: background 50ms ease, border-radius 50ms ease;
+}
+
+.controlsContainer .controlButton:hover::after {
+    background: #ffffff15;
+}
+
+.controlsContainer .controlButton:active::after {
+    background: transparent;
+}
+
+.controlsContainer .controlButton::before {
+    content: '';
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.4);
+    z-index: -1;
+    /* 預設為擴散與漸隱終點，放開滑鼠時觸發流暢 transition 動畫 */
+    transform: scale(1);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.4s cubic-bezier(0.1, 0.8, 0.3, 1), opacity 0.4s ease-out, border-radius 0.4s ease-out;
+}
+
+.controlsContainer .controlButton:active::before {
+    /* 按下瞬間(0s)重置為起點，不受放開時間限制 */
+    transform: scale(0);
+    opacity: 0.6;
+    transition: 0s;
+    border-radius: 20px;
 }
 
 .a {
@@ -283,7 +344,7 @@ body {
     height: calc(40px + var(--utility-hidden-height));
     top: 0;
     right: 0;
-    z-index: 5;
+    z-index: 10;
     user-select: none;
     -webkit-user-select: none;
 }
@@ -299,7 +360,7 @@ body {
 }
 
 #utilityContainer .closeBtn {
-    background-color: var(--top-utility-bg);
+    background-color: var(--main-color);
     overflow: hidden;
     width: 30%;
     position: absolute;
@@ -313,13 +374,13 @@ body {
     justify-content: center;
     cursor: pointer;
     box-sizing: border-box;
-    box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+    box-shadow: 0 2px 3px rgba(0, 0, 0, 0.5);
     border-radius: 0 0 10px 10px;
     transition: background-color 100ms ease;
 }
 
 #utilityContainer .closeBtn:hover {
-    background-color: var(--top-utility-btn);
+    background-color: var(--button-ouline);
 }
 
 #utilityContainer .warnbtn {
@@ -349,7 +410,7 @@ body {
 }
 
 #topUtilityBtns {
-    background: var(--top-utility-bg);
+    background: var(--main-color);
     width: 100%;
     height: 40px;
     padding: 5px;
@@ -369,7 +430,7 @@ body {
     flex: 0 0 auto;
     padding: 5px;
     background: transparent;
-    border: var(--top-utility-btn) 1px solid;
+    border: var(--button-ouline) 1px solid;
     box-sizing: border-box;
     color: white;
     width: 60px;
@@ -446,11 +507,77 @@ body {
     position: absolute;
     top: 40px;
     bottom: 30px;
-    left: 50%;
-    width: 50%;
+    left: calc(var(--split-ratio) * 100%);
+    width: calc((1 - var(--split-ratio)) * 100%);
     height: calc(100% - var(--playControls-height) - 40px);
-    background: var(--editor-bg);
+    background: var(--editor-background);
     /* 背景深色 */
+}
+
+#panelSplitter {
+    position: absolute;
+    top: 40px;
+    height: calc(100% - var(--playControls-height) - 40px);
+    left: calc(var(--split-ratio) * 100% - 3px);
+    width: 6px;
+    cursor: col-resize;
+    z-index: 4;
+    background: transparent;
+    transition: background 0.15s ease;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+#panelSplitter::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 2px;
+    background: #3a3a3a;
+    transition: background 0.15s ease, width 0.15s ease, left 0.15s ease;
+}
+
+#panelSplitter:hover::after,
+#panelSplitter.dragging::after {
+    left: 1px;
+    width: 4px;
+    background: var(--accent-color);
+}
+
+#panelSplitter.expanded {
+    top: 0;
+    height: calc(100% - var(--playControls-height));
+}
+
+/* snap 狀態：canvas 被隱藏，splitter 固定在左緣並變粗 */
+#panelSplitter.snapped {
+    left: 0 !important;
+    width: 10px;
+    cursor: e-resize;
+    z-index: 100;
+    background: rgba(74, 144, 226, 0.08);
+    transition: background 0.15s ease;
+}
+
+#panelSplitter.snapped::after {
+    left: 3px;
+    width: 4px;
+    background: #3a3a3a;
+    border-radius: 2px;
+}
+
+#panelSplitter.snapped:hover {
+    background: rgba(74, 144, 226, 0.18);
+}
+
+#panelSplitter.snapped:hover::after,
+#panelSplitter.snapped.dragging::after {
+    left: 2px;
+    width: 8px;
+    background: var(--accent-color);
 }
 
 #visualEditor {
@@ -474,6 +601,7 @@ body {
     margin: 0;
     padding: 5px;
     padding-top: calc(var(--utility-hidden-height) + 5px);
+    padding-bottom: calc((100vh - var(--playControls-height) - 40px) * 0.5);
     box-sizing: border-box;
     font-family: 'Consolas', monospace;
     /* 必須設置寬度 */
@@ -538,29 +666,31 @@ body {
 
 .utilityDropdown.open .utilityDropdown-content,
 .utilityDropdown:hover .utilityDropdown-content {
-    left: 20px;
-    display: flex;
     opacity: 1;
+    visibility: visible;
+    transform: scaleY(1);
     pointer-events: auto;
 }
 
 .utilityDropdown-content {
-    display: none;
+    display: flex;
     position: absolute;
     top: 40px;
-    left: 0px;
-    background-color: var(--top-utility-bg);
+    background-color: var(--main-color);
     min-width: 120px;
     box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.5);
     z-index: 100;
-    border: 1px solid var(--top-utility-btn);
+    border: 1px solid var(--button-ouline);
     border-radius: 10px;
     padding: 5px;
     flex-direction: column;
     gap: 5px;
     opacity: 0;
+    visibility: hidden;
+    transform: scaleY(0);
+    transform-origin: top center;
     pointer-events: none;
-    transition: opacity 0.2s ease-out;
+    transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.2s;
 }
 
 .utilityDropdown-content .utilityButton {
@@ -574,7 +704,7 @@ body {
 }
 
 .utilityDropdown-content .utilityButton:hover {
-    background-color: var(--top-utility-btn);
+    background-color: var(--button-ouline);
 }
 
 .utilityDropdown-content .utilityMenuTitle {
@@ -594,23 +724,32 @@ body {
 }
 
 .utilitySubmenu {
-    display: none;
+    display: flex;
     position: absolute;
     top: 0;
     left: 100%;
     min-width: 150px;
-    background-color: var(--top-utility-bg);
-    border: 1px solid var(--top-utility-btn);
+    background-color: var(--main-color);
+    border: 1px solid var(--button-ouline);
     border-radius: 10px;
     padding: 5px;
     flex-direction: column;
     gap: 5px;
     box-shadow: 0px 8px 16px rgba(0, 0, 0, 0.5);
     z-index: 110;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(-6px) scale(0.96);
+    transform-origin: top left;
+    pointer-events: none;
+    transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.18s;
 }
 
 .utilityDropdown-content .utilityMenuTitle:hover .utilitySubmenu {
-    display: flex;
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(0) scale(1);
+    pointer-events: auto;
 }
 
 .utilitySubmenu .utilityButton {
@@ -621,7 +760,7 @@ body {
     width: 90%;
     margin: 0;
     align-self: center;
-    border: 1px solid var(--top-utility-btn);
+    border: 1px solid var(--button-ouline);
 }
 
 .quick-panel {
@@ -654,7 +793,7 @@ body {
     color: #ffffffaa;
     border-radius: 4px;
     transition: all 0.15s ease-out;
-    background-color: var(--top-utility-bg);
+    background-color: var(--main-color);
     isolation: isolate;
 }
 
@@ -723,4 +862,167 @@ body {
 .quick-panel[data-active-dir="down-right"] #select-down-right span {
     color: #000000;
     mix-blend-mode: destination-out;
+}
+
+/* 尋找與取代浮動視窗樣式 */
+.find-replace-bar {
+    position: absolute;
+    top: 10px;
+    right: 25px;
+    z-index: 100;
+    background: var(--main-color);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 8px 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    color: #eee;
+}
+
+.findbar-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.findbar-drag-handle {
+    cursor: grab;
+    color: #666;
+    font-size: 18px;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: color 0.15s ease;
+    margin-right: -2px;
+}
+
+.findbar-drag-handle:hover,
+.find-replace-bar.dragging .findbar-drag-handle {
+    color: #4a90e2;
+    cursor: grabbing;
+}
+
+.findbar-input {
+    background: #121216;
+    border: 1px solid #333;
+    border-radius: 4px;
+    color: #fff;
+    padding: 4px 8px;
+    font-size: 13px;
+    outline: none;
+    width: 170px;
+    transition: border-color 0.15s ease;
+}
+
+.findbar-input:focus {
+    border-color: var(--accent-color);
+}
+
+.findbar-count {
+    font-size: 12px;
+    color: #888;
+    min-width: 45px;
+    text-align: center;
+}
+
+.findbar-btn {
+    background: #2a2a35;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #ddd;
+    padding: 3px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.findbar-btn:hover {
+    background: #3b3b4a;
+    color: #fff;
+}
+
+.findbar-btn.close-btn {
+    background: transparent;
+    border: none;
+    color: #aaa;
+    font-size: 14px;
+    padding: 2px 6px;
+}
+
+.findbar-btn.close-btn:hover {
+    color: #ff5555;
+}
+
+.findbar-btn.action-btn {
+    background: #3a4a60;
+    border-color: #4a5a70;
+}
+
+.findbar-btn.action-btn:hover {
+    background: #4a6080;
+}
+
+/* SwitchBox (輸入區右下角左右長條圓角矩形符號切換盒 - 懸浮感無描邊) */
+.switchBox {
+    position: absolute;
+    right: 16px;
+    bottom: 16px;
+    z-index: 10;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px;
+    background: var(--main-color);
+    border: none;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 4px rgba(0, 0, 0, 0.25);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.switchBox input[type="radio"] {
+    display: none;
+}
+
+.switchBox .switch-item {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.6);
+    transition: all 0.15s ease;
+}
+
+.switchBox .switch-item:hover {
+    color: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+}
+
+.switchBox input[type="radio"]:checked+.switch-item {
+    background: #484852;
+    color: #ffffff;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.switchBox .switch-item .material-symbols-outlined {
+    font-size: 18px;
+}
+
+.switchBox .switch-divider {
+    width: 1px;
+    height: 16px;
+    background: rgba(255, 255, 255, 0.15);
+    margin: 0 1px;
+    flex-shrink: 0;
 }

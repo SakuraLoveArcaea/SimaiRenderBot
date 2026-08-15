@@ -23,6 +23,10 @@ export const ja = {
         toolsFetchFromMainote: "Mainoteから取得",
         toolsI18nEditor: "i18n翻訳エディタ",
         toolsPopup: "ポップアウトプレビュー",
+        toolsPopupOpened: "外部ウィンドウで開いています",
+        toolsFindReplace: "検索と置換",
+        toolsToggleBk: "Break (bk) 切替/追加",
+        toolsToggleEx: "EX (ex) 切替/追加",
         manageResources: "リソース管理",
         chartInfo: "譜面情報",
         settings: "設定",
@@ -41,7 +45,12 @@ export const ja = {
         displayModeSimai: "Simai",
         displayModeVisual: "タイムライン",
         readyBeat: "予備拍",
-        timeSignature: "拍子記号"
+        timeSignature: "拍子記号",
+        gridDivision: "分割",
+        gridDivisionCustom: "カスタム...",
+        visualToolMode: "モード",
+        visualToolModeEdit: "編集 ✏️",
+        visualToolModeSelect: "選択 ↖️"
     },
     textarea: {
         placeholder: "ここに譜面データを入力してください..."
@@ -72,6 +81,7 @@ export const ja = {
         setPlaybackSpeed: "再生速度を {speed}x に設定しました",
         resetPlaybackSpeed: "再生速度をリセットしました",
         settingsSaved: "設定を保存しました",
+        panelRatioReset: "パネル割合を復元しました",
         restoreSaved: "値を復元しました（未保存）",
         noAudioFile: "音声ファイルが見つかりません",
         tagReadSuccess: "タグの読み込みに成功: {title}",
@@ -113,7 +123,11 @@ export const ja = {
             showSensor: "センサーを表示",
             showSensorTextWhenPaused: "一時停止時にセンサーテキストを表示",
             hideBackgroundWhenPaused: "一時停止時に背景を非表示",
-            rotateStars: "星を回転",
+            rotateStars: "スターの回転",
+            slideArrowHideBySensor: "センサーによるスライド矢印消去",
+            hideOutline: "判定リングを非表示",
+            showCoverWhenPaused: "一時停止時にジャケット画像を表示",
+            resetPanelRatio: "パネル割合を復元",
             globalVolume: "全体の音量",
             musicVolume: "楽曲の音量",
             SfxVolume: "SFX音量",
@@ -126,7 +140,8 @@ export const ja = {
             autoPauseOnScroll: "スクロール時に自動一時停止",
             globalTimeline: "全体のタイムラインを表示",
             enableQuickPanel: "クイックパネルを有効にする",
-            lang: "言語"
+            lang: "言語",
+            lowRes: "低解像度モード (1x 解像度に制限して軽量化)"
         },
         middleDisplayOpts: {
             off: "オフ",
@@ -140,6 +155,7 @@ export const ja = {
         cancel: "キャンセル",
         close: "閉じる",
         reset: "リセット",
+        resetPanelRatio: "パネル割合を復元",
         ok: "OK",
         start: "スタート",
         init: {
@@ -275,8 +291,10 @@ export const ja = {
             customFps: "カスタムFPS:",
             bgmVolume: "BGM音量:",
             sfxVolume: "効果音音量:",
-            includeAudio: "BGMを含める:",
-            includeSfx: "効果音を含める:"
+            includeAudio: "オーディオを含める:",
+            includeSfx: "効果音を含める:",
+            includeIntro: "譜面ロードアニメーション:",
+            includeAllPerfect: "動画の最後にALL PERFECTを表示:"
         },
         quickGenerate: {
             title: "クイック生成",
@@ -310,6 +328,8 @@ export const ja = {
             basicItems: [
                 `<b>読み込み＆新規作成</b>: 左上メニューの「ファイル」をクリックして、新規プロジェクトの作成、フォルダの読み込み、またはZIPアーカイブの読み込みを行います。`,
                 `<b>ダウンロード</b>: 左上メニューの「ファイル > ダウンロード」をクリックして、プロジェクトを圧縮パッケージとしてダウンロードします。`,
+                `<b>パネル分割＆全画面表示</b>: 中央の分割線をドラッグして左右の比率を変更します。左端までドラッグするとプレビューを非表示にし、エディタを全画面化します。`,
+                `<b>ノートフラグ切替</b>: メニューの「Break (bk) 切替/追加」または「EX (ex) 切替/追加」で、選択範囲または全テキストのノートフラグをまとめて切り替えます。`,
                 `<b>ボトムバー</b>: <span class="material-symbols-outlined" translate="no">keyboard_arrow_down</span> で仮想キーボードを非表示に、<span class="material-symbols-outlined" translate="no">keyboard</span> で表示します。`,
                 `<b>自動保存</b>: プロジェクトは自動的に保存されます。または、<span class="code-highlight">Ctrl</span><span class="code-highlight">S</span> を押して手動で保存することもできます。`
             ],
@@ -318,11 +338,31 @@ export const ja = {
             shortcutItems: [
                 `<b>再生 / 一時停止</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">Space</span>。`,
                 `<b>最初から再生</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">Backspace</span>。`,
+                `<b>検索 / 置換</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">F</span> で検索、<span class="code-highlight">Ctrl</span><span class="code-highlight">H</span> で検索と置換。`,
                 `<b>元に戻す / やり直し</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">Z</span> / <span class="code-highlight">Ctrl</span><span class="code-highlight">Y</span>。`,
                 `<b>再生速度を上げる</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">P</span>。`,
                 `<b>再生速度を下げる</b>: <span class="code-highlight">Ctrl</span><span class="code-highlight">O</span>。`,
                 `<b>スクロール速度変更</b>: <span class="code-highlight">Ctrl</span> + マウスホイールでタイムラインの流速をズームします。`
             ]
         }
+    },
+    rpc: {
+        idleDetails: "白紙を眺めています",
+        idleState: "アイドル中",
+        editingDetails: "編集中: {title}",
+        difficultyState: "難易度: {diff}",
+        unknownDiff: "不明"
+    },
+    findReplace: {
+        findPlaceholder: "検索文字列...",
+        replacePlaceholder: "置換文字列...",
+        noMatches: "一致なし",
+        matchCount: "{current}/{total}",
+        replaceOne: "置換",
+        replaceAll: "すべて置換",
+        toastToggleBkSelection: "選択範囲の Break (bk) 状態を切り替えました",
+        toastToggleBkFull: "全テキストの Break (bk) 状態を切り替えました",
+        toastToggleExSelection: "選択範囲の EX (ex) 状態を切り替えました",
+        toastToggleExFull: "全テキストの EX (ex) 状態を切り替えました"
     }
 };
