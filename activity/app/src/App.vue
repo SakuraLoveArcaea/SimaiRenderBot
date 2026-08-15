@@ -70,7 +70,7 @@ async function onSelectChart(chartId) {
 
     engine.resetPlaybackState();
     const maxComma = chart.C.value.length - 2;
-    rangeSel.initBounds(maxComma, { start: 0, end: maxComma });
+    rangeSel.initBounds(maxComma);
     engine.seek(0);
     rangeSel.setActiveEndpoint(null);
     inputsEnabled.value = true; 
@@ -160,7 +160,7 @@ async function init() {
       showMessage('↩️ 已回到訊息中那一段的位置', 'info');
       engine.seek(chart.C.value[safeRange.start] ?? 0);
     } else {
-      rangeSel.initBounds(maxComma, { start: 0, end: maxComma });
+      rangeSel.initBounds(maxComma);
       engine.seek(0);
     }
 

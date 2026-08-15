@@ -85,20 +85,21 @@ export function useRangeSelection(chart, engine) {
 
   function initBounds(maxCommaValue, initial) {
     maxComma.value = maxCommaValue;
-    rangeAValue.value = initial?.start ?? 0;
+    const startVal = initial?.start ?? 0;
+    rangeAValue.value = startVal;
     if (initial?.end !== undefined) {
       rangeBValue.value = Math.min(maxCommaValue, Math.max(0, initial.end));
     } else {
       // 預設選取起點後約 8~10 秒範圍，避免一打開就整首超長（超過上限）
       const C = chart.C.value;
-      const t0 = C[0] ?? 0;
-      let defaultEnd = 0;
-      for (let i = 0; i < maxCommaValue; i++) {
+      const t0 = C[startVal] ?? 0;
+      let defaultEnd = startVal;
+      for (let i = startVal; i < maxCommaValue; i++) {
         const t = C[i + 1] ?? (chart.DATA.value?.meta?.endTime ?? 0);
         if (t - t0 > 10) break;
         defaultEnd = i;
       }
-      rangeBValue.value = Math.max(1, Math.min(defaultEnd, maxCommaValue));
+      rangeBValue.value = Math.max(startVal + 1, Math.min(defaultEnd, maxCommaValue));
     }
   }
 
@@ -129,7 +130,20 @@ export function useRangeSelection(chart, engine) {
     const cIdx = engine.currentCommaIndex();
     const oldEnd = range.value.end;
     rangeAValue.value = cIdx;
-    rangeBValue.value = Math.max(oldEnd, cIdx);
+    const C = chart.C.value;
+    const t0 = C[cIdx] ?? 0;
+    const t1 = C[oldEnd + 1] ?? (chart.DATA.value?.meta?.endTime ?? 0);
+    if (oldEnd <= cIdx || t1 - t0 > 15) {
+      let defaultEnd = cIdx;
+      for (let i = cIdx; i < maxComma.value; i++) {
+        const t = C[i + 1] ?? (chart.DATA.value?.meta?.endTime ?? 0);
+        if (t - t0 > 10) break;
+        defaultEnd = i;
+      }
+      rangeBValue.value = Math.max(cIdx + 1, Math.min(defaultEnd, maxComma.value));
+    } else {
+      rangeBValue.value = oldEnd;
+    }
   }
 
   function setEnd() {
