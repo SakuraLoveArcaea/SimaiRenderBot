@@ -56,7 +56,7 @@ export function startActivityServer(client, service) {
                 return handleListProviders(req, res);
             }
             if (req.method === 'GET' && url.pathname === '/api/charts') {
-                return await handleListCharts(url, req, res);
+                return await handleListCharts(req, res);
             }
             if (req.method === 'GET' && url.pathname === '/api/chart') {
                 console.log('[Activity Server] 收到獲取譜面請求');
