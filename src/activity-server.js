@@ -217,7 +217,7 @@ async function handleNotify(req, res, client) {
 
 /** 互動頁面渲染請求：呼叫渲染引擎產出 GIF 並發到對應頻道 */
 async function handleRender(req, res, client, service) {
-    const { channelId, userId, username, simai, isDual, simaiL, simaiR, startComma, endComma, chartName, cleanCut } = await readJsonBody(req);
+    const { channelId, userId, username, chartId, simai, isDual, simaiL, simaiR, startComma, endComma, chartName, cleanCut } = await readJsonBody(req);
 
     // 「切的乾淨」：把選取範圍從 simai 原始碼切出來成一段獨立譜面（切到 hold／slide
     // 中間也照切），並補回開頭的 BPM／分音再送去渲染。關閉時沿用舊做法：送整份譜面
@@ -333,9 +333,12 @@ async function handleRender(req, res, client, service) {
                 const segment = `${comboLabel}（${formatTime(start)}–${formatTime(shownEnd)}）`;
                 const title = chartName ? `**${chartName}**　` : '';
 
-                // 「繼續看譜」：帶著這段的逗號區間，點下去會開啟 Activity 並還原到同一位置
+                // 「繼續看譜」：帶著這段的逗號區間與曲目 id，點下去會開啟 Activity 並還原到同一位置
+                const resumeCustomId = chartId
+                    ? `${RESUME_BTN_PREFIX}${encodeURIComponent(chartId)}:${safeStart}:${safeEnd}`
+                    : `${RESUME_BTN_PREFIX}${safeStart}:${safeEnd}`;
                 const resumeBtn = new ButtonBuilder()
-                    .setCustomId(`${RESUME_BTN_PREFIX}${safeStart}:${safeEnd}`)
+                    .setCustomId(resumeCustomId)
                     .setLabel('▶ 繼續看譜')
                     .setStyle(ButtonStyle.Primary);
 

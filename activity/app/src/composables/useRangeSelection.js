@@ -35,16 +35,16 @@ export function useRangeSelection(chart, engine) {
   }
 
   function comboRangeSpan() {
-    const N = chart.N.value;
+    const times = chart.comboTimes?.value;
     const C = chart.C.value;
-    if (!N || N.length === 0) return null;
+    if (!times || times.length === 0 || !C || C.length < 2) return null;
     const t0 = C[range.value.start] ?? 0;
     const t1 = C[range.value.end + 1] ?? (chart.DATA.value?.meta.endTime ?? 0);
-    const firstIdx = N.findIndex(n => n.time >= t0 - 1e-6);
-    if (firstIdx === -1 || N[firstIdx].time >= t1 - 1e-6) return null;
+    const firstIdx = times.findIndex(t => t >= t0 - 1e-6);
+    if (firstIdx === -1 || times[firstIdx] >= t1 - 1e-6) return null;
     let lastIdx = firstIdx;
-    for (let i = N.length - 1; i >= firstIdx; i--) {
-      if (N[i].time < t1 - 1e-6) { lastIdx = i; break; }
+    for (let i = times.length - 1; i >= firstIdx; i--) {
+      if (times[i] < t1 - 1e-6) { lastIdx = i; break; }
     }
     return { first: firstIdx + 1, last: lastIdx + 1 };
   }
@@ -86,7 +86,20 @@ export function useRangeSelection(chart, engine) {
   function initBounds(maxCommaValue, initial) {
     maxComma.value = maxCommaValue;
     rangeAValue.value = initial?.start ?? 0;
-    rangeBValue.value = initial?.end ?? maxCommaValue;
+    if (initial?.end !== undefined) {
+      rangeBValue.value = Math.min(maxCommaValue, Math.max(0, initial.end));
+    } else {
+      // 預設選取起點後約 8~10 秒範圍，避免一打開就整首超長（超過上限）
+      const C = chart.C.value;
+      const t0 = C[0] ?? 0;
+      let defaultEnd = 0;
+      for (let i = 0; i < maxCommaValue; i++) {
+        const t = C[i + 1] ?? (chart.DATA.value?.meta?.endTime ?? 0);
+        if (t - t0 > 10) break;
+        defaultEnd = i;
+      }
+      rangeBValue.value = Math.max(1, Math.min(defaultEnd, maxCommaValue));
+    }
   }
 
   function onRangeInput(which, value) {

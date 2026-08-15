@@ -40,11 +40,28 @@ function applyMirror(text, mode) {
   return text;
 }
 
+function extractComboTimes(decodedNotes) {
+  const times = [];
+  for (const n of (decodedNotes || [])) {
+    if (n.isMine) continue;
+    if (n.type === 'slide' || n.slideType) {
+      if (n.lastSlide) {
+        times.push(n.time + (n.slideDelay ?? 0) + (n.slideDuration ?? 0));
+      }
+    } else {
+      times.push(n.time);
+    }
+  }
+  times.sort((a, b) => a - b);
+  return times;
+}
+
 function processChartData(decoded) {
   const bpm = decoded.bpm || 60;
   const firstBpm = decoded.tags.find(t => t.type === 'bpm')?.value || bpm;
   const measureDuration = 240 / firstBpm;
   const endTime = decoded.endTime || 0;
+  const comboTimes = extractComboTimes(decoded.notes);
 
   const M_arr = [];
   const offset = measureDuration; // maimai 譜面第一小節為偏置 (1 measure)
@@ -72,7 +89,7 @@ function processChartData(decoded) {
   return {
     meta: {
       bpm: firstBpm,
-      total: decoded.notes.length,
+      total: comboTimes.length,
       counts: decoded.notesConts || {
         tap: decoded.notes.filter(n => n.type === 'tap' && !n.isBreak).length,
         hold: decoded.notes.filter(n => n.type === 'hold' && !n.isBreak).length,
@@ -87,6 +104,7 @@ function processChartData(decoded) {
     notes: decoded.notes,
     tags: decoded.tags,
     indexToTime: decoded.indexToTime || [],
+    comboTimes,
   };
 }
 
@@ -104,6 +122,7 @@ export function useChartData() {
   const N = shallowRef([]);
   const D = shallowRef([]);
   const C = shallowRef([]);
+  const comboTimes = shallowRef([]);
   const commaParts = shallowRef([]);
 
   function decodeAndPopulate(text, name) {
@@ -119,6 +138,7 @@ export function useChartData() {
     N.value = processed.notes;
     D.value = processed.density;
     C.value = processed.indexToTime;
+    comboTimes.value = processed.comboTimes;
     commaParts.value = splitCommaParts(text);
 
     return processed;
@@ -151,6 +171,7 @@ export function useChartData() {
     N.value = other.N.value;
     D.value = other.D.value;
     C.value = other.C.value;
+    comboTimes.value = other.comboTimes.value;
     commaParts.value = other.commaParts.value;
   }
 
@@ -176,11 +197,12 @@ export function useChartData() {
     N.value = [];
     D.value = [];
     C.value = [];
+    comboTimes.value = [];
     commaParts.value = [];
   }
 
   return {
-    chartText, originalText, chartName, DATA, M, N, D, C, commaParts,
+    chartText, originalText, chartName, DATA, M, N, D, C, comboTimes, commaParts,
     mirrorMode, mirrorLabel, cycleMirror,
     loadChart, loadFromText, adoptFrom, clear,
   };

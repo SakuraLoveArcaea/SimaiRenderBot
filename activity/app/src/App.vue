@@ -84,8 +84,8 @@ async function onSelectChart(chartId) {
 
 const hudBpm = computed(() => chart.DATA.value ? Math.round(chart.DATA.value.meta.bpm) : '-');
 const hudMeasureMax = computed(() => chart.DATA.value ? chart.M.value.length - 1 : '-');
-const hudComboMax = computed(() => chart.DATA.value ? chart.N.value.length : '-');
-const hudComboMaxR = computed(() => chartR.DATA.value ? chartR.N.value.length : '-');
+const hudComboMax = computed(() => chart.DATA.value ? (chart.comboTimes?.value?.length ?? 0) : '-');
+const hudComboMaxR = computed(() => chartR.DATA.value ? (chartR.comboTimes?.value?.length ?? 0) : '-');
 const metaLine = computed(() => {
   if (!chart.DATA.value) return '';
   const c = chart.DATA.value.meta.counts;
@@ -239,10 +239,30 @@ function onCycleMirror() {
   if (isDualMode.value) chartR.cycleMirror();
   engine.resetPlaybackState();
   const maxComma = chart.C.value.length - 2;
-  rangeSel.initBounds(maxComma, { start: 0, end: maxComma });
+  rangeSel.initBounds(maxComma);
   engine.seek(0);
   rangeSel.setActiveEndpoint(null);
   showMessage(`🔄 鏡像模式：${chart.mirrorLabel.value}`, 'info');
+}
+
+function onCycleMirrorL() {
+  engine.pause();
+  chart.cycleMirror();
+  engine.resetPlaybackState();
+  const maxComma = chart.C.value.length - 2;
+  rangeSel.initBounds(maxComma);
+  engine.seek(0);
+  rangeSel.setActiveEndpoint(null);
+  showMessage(`🔄 1P (L) 鏡像：${chart.mirrorLabel.value}`, 'info');
+}
+
+function onCycleMirrorR() {
+  engine.pause();
+  chartR.cycleMirror();
+  engine.resetPlaybackState();
+  engine.seek(0);
+  rangeSel.setActiveEndpoint(null);
+  showMessage(`🔄 2P (R) 鏡像：${chartR.mirrorLabel.value}`, 'info');
 }
 
 // ---------- 匯出：先跳確認彈窗，看過實際會送出的內容再真的送出 ----------
@@ -291,6 +311,7 @@ async function doExport() {
   const dur = rangeSel.rangeDuration.value;
   try {
     const res = await session.submitRender({
+      chartId: currentChartId.value,
       simai: chart.chartText.value,
       isDual: isDualMode.value,
       simaiL: isDualMode.value ? chart.chartText.value : null,
@@ -407,6 +428,9 @@ onUnmounted(() => {
       :sfx-off="sfx.sfxMode.value === 'off'"
       :clean-cut="rangeSel.cleanCut.value"
       :mirror-label="chart.mirrorLabel.value"
+      :mirror-label-l="chart.mirrorLabel.value"
+      :mirror-label-r="chartR.mirrorLabel.value"
+      :is-dual="isDualMode"
       :disabled="!inputsEnabled"
       @update:speed="engine.setSpeed"
       @update:hs="onSetHs"
@@ -414,6 +438,8 @@ onUnmounted(() => {
       @cycle-sfx-mode="sfx.cycleSfxMode"
       @toggle-clean-cut="rangeSel.cleanCut.value = !rangeSel.cleanCut.value"
       @cycle-mirror="onCycleMirror"
+      @cycle-mirror-l="onCycleMirrorL"
+      @cycle-mirror-r="onCycleMirrorR"
     />
 
     <div class="main-content" :class="{ 'is-dual-layout': isDualMode }">
@@ -431,7 +457,10 @@ onUnmounted(() => {
           <div class="dual-player-row">
             <div class="player-stage-card">
               <div class="player-stage-badge l">
-                <span>🔷 1P (L)</span>
+                <div class="badge-player-title">
+                  <span>🔷 1P (L)</span>
+                  <button class="btn-badge-mirror" title="切換 1P 鏡像" @click="onCycleMirrorL">🔄 {{ chart.mirrorLabel.value }}</button>
+                </div>
                 <span class="player-combo-val">Combo <b>{{ engine.hudCombo.value }}</b> / {{ hudComboMax }}</span>
               </div>
               <div class="stage-container">
@@ -441,7 +470,10 @@ onUnmounted(() => {
 
             <div class="player-stage-card">
               <div class="player-stage-badge r">
-                <span>🌸 2P (R)</span>
+                <div class="badge-player-title">
+                  <span>🌸 2P (R)</span>
+                  <button class="btn-badge-mirror" title="切換 2P 鏡像" @click="onCycleMirrorR">🔄 {{ chartR.mirrorLabel.value }}</button>
+                </div>
                 <span class="player-combo-val">Combo <b>{{ engine.hudComboR.value }}</b> / {{ hudComboMaxR }}</span>
               </div>
               <div class="stage-container">

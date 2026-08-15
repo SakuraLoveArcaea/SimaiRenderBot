@@ -554,8 +554,21 @@ function missingHeaderReply(userId, simaiText, source = null) {
  * 任何人都能點（等於「我也想看這段」），各自的續看位置以 user id 分開存。
  */
 async function handleResumeButton(interaction) {
-    const [, startStr, endStr] = interaction.customId.split(':');
+    const raw = interaction.customId.slice(RESUME_BTN_PREFIX.length);
+    const parts = raw.split(':');
+    let chartId = null;
+    let startStr = '0';
+    let endStr = '0';
+    if (parts.length >= 3) {
+        chartId = decodeURIComponent(parts[0]);
+        startStr = parts[1];
+        endStr = parts[2];
+    } else if (parts.length === 2) {
+        startStr = parts[0];
+        endStr = parts[1];
+    }
     saveResumeSession(interaction.user.id, {
+        chartId: chartId || undefined,
         startComma: Number(startStr) || 0,
         endComma: Number(endStr) || 0,
     });

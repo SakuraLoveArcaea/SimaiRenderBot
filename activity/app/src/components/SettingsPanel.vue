@@ -11,9 +11,21 @@ const props = defineProps({
   sfxOff: { type: Boolean, default: false },
   cleanCut: { type: Boolean, required: true },
   mirrorLabel: { type: String, required: true },
+  mirrorLabelL: { type: String, default: '' },
+  mirrorLabelR: { type: String, default: '' },
+  isDual: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
 });
-const emit = defineEmits(['update:speed', 'update:hs', 'update:sfx-volume', 'cycle-sfx-mode', 'toggle-clean-cut', 'cycle-mirror']);
+const emit = defineEmits([
+  'update:speed',
+  'update:hs',
+  'update:sfx-volume',
+  'cycle-sfx-mode',
+  'toggle-clean-cut',
+  'cycle-mirror',
+  'cycle-mirror-l',
+  'cycle-mirror-r',
+]);
 
 const panelRoot = ref(null);
 defineExpose({ panelRoot });
@@ -51,7 +63,23 @@ defineExpose({ panelRoot });
         @click="emit('toggle-clean-cut')"
       >✂ 切的乾淨：{{ cleanCut ? '開' : '關' }}</button>
     </span>
-    <span class="speedbox">
+
+    <!-- 雙人模式支援各自調整鏡像 -->
+    <template v-if="isDual">
+      <span class="speedbox">
+        <button class="btn-sfx-mode"
+          title="切換 1P (L) 鏡像：原譜 → 左右 → 上下 → 全"
+          @click="emit('cycle-mirror-l')"
+        >🔄 1P (L) 鏡像：{{ mirrorLabelL || mirrorLabel }}</button>
+      </span>
+      <span class="speedbox">
+        <button class="btn-sfx-mode"
+          title="切換 2P (R) 鏡像：原譜 → 左右 → 上下 → 全"
+          @click="emit('cycle-mirror-r')"
+        >🔄 2P (R) 鏡像：{{ mirrorLabelR || mirrorLabel }}</button>
+      </span>
+    </template>
+    <span v-else class="speedbox">
       <button class="btn-sfx-mode"
         title="循環切換：原譜 → 左右翻轉 → 上下翻轉 → 全（180°旋轉）"
         @click="emit('cycle-mirror')"

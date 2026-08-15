@@ -133,18 +133,28 @@ export function usePlayerEngine(chart, chartR = null) {
   }
 
   function currentComboIndex() {
-    const N = chart.N.value;
-    if (!N || N.length === 0) return 0;
-    const idx = N.findIndex(n => n.time >= realTime.value);
-    return idx === -1 ? N.length - 1 : idx;
+    const times = chart.comboTimes?.value;
+    if (!times || times.length === 0) return 0;
+    const t = realTime.value;
+    let count = 0;
+    for (let i = 0; i < times.length; i++) {
+      if (times[i] <= t + 1e-6) count++;
+      else break;
+    }
+    return count;
   }
 
   function currentComboIndexR() {
-    if (!chartR || !chartR.N.value) return 0;
-    const N = chartR.N.value;
-    if (N.length === 0) return 0;
-    const idx = N.findIndex(n => n.time >= realTime.value);
-    return idx === -1 ? N.length - 1 : idx;
+    if (!chartR || !chartR.comboTimes) return 0;
+    const times = chartR.comboTimes.value;
+    if (!times || times.length === 0) return 0;
+    const t = realTime.value;
+    let count = 0;
+    for (let i = 0; i < times.length; i++) {
+      if (times[i] <= t + 1e-6) count++;
+      else break;
+    }
+    return count;
   }
 
   const hudMeasure = computed(() => measureIndex(realTime.value));
