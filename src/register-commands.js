@@ -41,6 +41,11 @@ export const commands = [
     new SlashCommandBuilder()
         .setName('testchart')
         .setDescription('【測試用】渲染內建測試譜面，可從指定 combo 開始播放（先預覽範圍再渲染）')
+        .addStringOption((o) => o
+            .setName('song')
+            .setDescription('選擇譜面（可輸入關鍵字搜尋曲名）')
+            .setAutocomplete(true)
+            .setRequired(false))
         .addIntegerOption((o) => o
             .setName('combo')
             .setDescription('從第幾 combo 開始（預設 1 = 開頭）')

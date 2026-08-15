@@ -4,7 +4,7 @@ import {
 } from 'discord.js';
 import { SimaiRenderService } from './render.js';
 import { KB_PREFIX, handleKeyboardCommand, handleKeyboardComponent } from './keyboard.js';
-import { loadChart, sliceSource, analyzeHeader } from './chart.js';
+import { loadChart, listCharts, sliceSource, analyzeHeader } from './chart.js';
 import { startActivityServer, RESUME_BTN_PREFIX } from './activity-server.js';
 import { saveResumeSession } from './resume.js';
 
@@ -59,6 +59,22 @@ client.once('clientReady', () => {
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
     try {
+        if (interaction.isAutocomplete()) {
+            if (interaction.commandName === 'testchart') {
+                const focusedValue = (interaction.options.getFocused() || '').toLowerCase();
+                const charts = await listCharts();
+                const filtered = charts
+                    .filter((c) => c.name.toLowerCase().includes(focusedValue) || (c.title && c.title.toLowerCase().includes(focusedValue)))
+                    .slice(0, 25);
+                return await interaction.respond(
+                    filtered.map((c) => ({
+                        name: `${c.difficulty ? `[${c.difficulty}] ` : ''}${c.title || c.name}`.slice(0, 100),
+                        value: c.id,
+                    }))
+                );
+            }
+            return;
+        }
         if (interaction.isChatInputCommand()) {
             if (interaction.commandName === 'check') return await handleCheck(interaction);
             if (interaction.commandName === 'render') return await handleSlashRender(interaction);
@@ -464,6 +480,7 @@ const CHART_DEFAULT_DURATION = 10; // 未指定長度時渲染的秒數
 const chartJobs = new Map();       // userId -> { text, name, start, end, combo, createdAt }
 
 async function handleChartCommand(interaction) {
+    const songId = interaction.options.getString('song');
     const combo = interaction.options.getInteger('combo') ?? 1;
     const count = interaction.options.getInteger('count');
     const duration = interaction.options.getNumber('duration');
@@ -478,7 +495,7 @@ async function handleChartCommand(interaction) {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const chart = await loadChart();
+    const chart = await loadChart(songId);
     const info = await service.comboInfo(chart.text);
     const total = info.comboTimes.length;
     if (!total) {
