@@ -6,7 +6,7 @@ import { SimaiRenderService } from './render.js';
 import { KB_PREFIX, handleKeyboardCommand, handleKeyboardComponent } from './keyboard.js';
 import { loadChart, listCharts, sliceSource, analyzeHeader } from './chart.js';
 import { startActivityServer, RESUME_BTN_PREFIX } from './activity-server.js';
-import { saveResumeSession } from './resume.js';
+import { saveResumeSession, getResumeToken } from './resume.js';
 
 try { process.loadEnvFile(new URL('../.env', import.meta.url).pathname); } catch { }
 
@@ -554,24 +554,11 @@ function missingHeaderReply(userId, simaiText, source = null) {
  * 任何人都能點（等於「我也想看這段」），各自的續看位置以 user id 分開存。
  */
 async function handleResumeButton(interaction) {
-    const raw = interaction.customId.slice(RESUME_BTN_PREFIX.length);
-    const parts = raw.split(':');
-    let chartId = null;
-    let startStr = '0';
-    let endStr = '0';
-    if (parts.length >= 3) {
-        chartId = decodeURIComponent(parts[0]);
-        startStr = parts[1];
-        endStr = parts[2];
-    } else if (parts.length === 2) {
-        startStr = parts[0];
-        endStr = parts[1];
+    const token = interaction.customId.slice(RESUME_BTN_PREFIX.length);
+    const data = getResumeToken(token);
+    if (data) {
+        saveResumeSession(interaction.user.id, data);
     }
-    saveResumeSession(interaction.user.id, {
-        chartId: chartId || undefined,
-        startComma: Number(startStr) || 0,
-        endComma: Number(endStr) || 0,
-    });
     await interaction.launchActivity();
 }
 

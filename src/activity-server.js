@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { loadChart, listCharts, buildCleanCutSimai } from './chart.js';
-import { takeResumeSession } from './resume.js';
+import { createResumeToken, takeResumeSession } from './resume.js';
 
 /** 「繼續看譜」按鈕的 customId 前綴，bot.js 會依這個前綴接手處理 */
 export const RESUME_BTN_PREFIX = 'resume:';
@@ -334,11 +334,9 @@ async function handleRender(req, res, client, service) {
                 const title = chartName ? `**${chartName}**　` : '';
 
                 // 「繼續看譜」：帶著這段的逗號區間與曲目 id，點下去會開啟 Activity 並還原到同一位置
-                const resumeCustomId = chartId
-                    ? `${RESUME_BTN_PREFIX}${encodeURIComponent(chartId)}:${safeStart}:${safeEnd}`
-                    : `${RESUME_BTN_PREFIX}${safeStart}:${safeEnd}`;
+                const token = createResumeToken({ chartId: chartId || undefined, startComma: safeStart, endComma: safeEnd });
                 const resumeBtn = new ButtonBuilder()
-                    .setCustomId(resumeCustomId)
+                    .setCustomId(`${RESUME_BTN_PREFIX}${token}`)
                     .setLabel('▶ 繼續看譜')
                     .setStyle(ButtonStyle.Primary);
 
