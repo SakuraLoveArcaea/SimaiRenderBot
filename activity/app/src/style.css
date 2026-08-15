@@ -106,35 +106,170 @@ header h1 {
   margin: 0;
 }
 
-.header-title-row {
-  display: flex;
-  align-items: center;
+.header-title-container {
+  position: relative;
+  display: inline-flex;
   justify-content: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  align-items: center;
 }
 
-.chart-select-dropdown {
-  background: var(--bg);
+.title-dropdown-trigger {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 4px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: inherit;
+  transition: all .15s ease;
+  max-width: 90vw;
+}
+
+.title-dropdown-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(88, 101, 242, 0.25);
+}
+
+.title-dropdown-trigger:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.dropdown-chevron {
+  font-size: 13px;
+  color: var(--dim);
+  transition: transform .2s ease;
+  margin-left: 2px;
+}
+
+.dropdown-chevron.open {
+  transform: rotate(180deg);
   color: var(--slide);
+}
+
+/* 下拉譜面選單彈窗 */
+.chart-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 320px;
+  max-width: 90vw;
+  background: rgba(18, 18, 42, 0.96);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: dropdownFade .15s ease-out;
+}
+
+@keyframes dropdownFade {
+  from { opacity: 0; transform: translate(-50%, -6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.dropdown-search-box {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.dropdown-search-input {
+  width: 100%;
+  background: #0f0f23;
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
+  color: #fff;
+  padding: 6px 10px;
+  font-size: 12px;
   outline: none;
-  transition: border-color .12s, background .12s;
+  transition: border-color .12s;
 }
 
-.chart-select-dropdown:hover:not(:disabled) {
-  border-color: var(--slide);
-  background: #2a2a55;
+.dropdown-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 6px rgba(88, 101, 242, 0.4);
 }
 
-.chart-select-dropdown:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.chart-list-scroll {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.chart-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  transition: background .12s;
+}
+
+.chart-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chart-item.active {
+  background: rgba(88, 101, 242, 0.2);
+  border: 1px solid rgba(88, 101, 242, 0.4);
+  color: var(--slide);
+  font-weight: 700;
+}
+
+.chart-diff-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.chart-diff-badge.master {
+  background: #9b59b6;
+  color: #fff;
+}
+
+.chart-diff-badge.remaster {
+  background: #e8ecfb;
+  color: #551a8b;
+}
+
+.chart-diff-badge.expert {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.chart-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-item-bpm {
+  font-size: 10px;
+  color: var(--dim);
+  flex-shrink: 0;
+  font-family: monospace;
+}
+
+.chart-item-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--dim);
 }
 
 .status-connecting {
