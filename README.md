@@ -5,7 +5,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-brightgreen.svg)](https://nodejs.org/)
 [![Discord.js](https://img.shields.io/badge/Discord.js-v14-blue.svg)](https://discord.js.org/)
 [![Vue 3](https://img.shields.io/badge/Vue-3.x-emerald.svg)](https://vuejs.org/)
-[![Vite](https://img.shields.io/badge/Vite-6.x-purple.svg)](https://vitejs.dev/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 ---
 
@@ -208,3 +208,9 @@ SimaiRenderBot/
 * 本專案為社群開源之非官方愛好者作品，僅供 maimai 玩家與音遊社群作為**譜面配置研究、慢速練習與技術交流**使用，**嚴禁用於任何商業或營利目的**。
 * **maimai (でらっくす)** 遊戲相關之所有商標、美術素材、音效、譜面資料及相關智慧財產權均屬 **SEGA Corporation** 所有。
 * 若相關版權方有任何疑慮，請透過 Issue 或 Pull Request 與我們聯繫，我們將會儘速配合調整。
+
+---
+
+## 📖 授權條款 (License)
+
+本專案依據 **GNU General Public License v3.0 (GPL-3.0)** 條款開源。詳細內容請參閱專案根目錄下的 [LICENSE](LICENSE) 檔案。
