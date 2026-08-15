@@ -8,8 +8,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 預設來源目錄
 const TARGET_DIRS = [
-  '/Users/lvjiayao/Projects/simai_to_lilipond_v3/chart',
   path.resolve(__dirname, '../testChart'),
+  '/Users/lvjiayao/Projects/simai_to_lilipond_v3/chart',
 ];
 
 /**
