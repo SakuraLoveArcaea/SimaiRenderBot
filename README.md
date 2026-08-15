@@ -90,7 +90,7 @@ Discord Client (Desktop / Mobile)
         ├── /simai, /keyboard (Slash Commands)
         ├── SimaiRenderService (Playwright Headless Canvas 渲染)
         ├── ActivityServer (Token 交換 / 譜面 API / 續看暫存)
-        └── ResumeTokenStore (短 Token 狀態池)
+        └── ResumeSession (續看工作階段狀態管理)
 ```
 
 ---
@@ -190,7 +190,7 @@ SimaiRenderBot/
 │   ├── bot.js                 # Discord Bot 主程式
 │   ├── activity-server.js     # Activity API 與 Token 伺服器
 │   ├── render.js              # Playwright 渲染服務
-│   ├── resume.js              # 短 Token 續看狀態管理
+│   ├── resume.js              # 續看工作階段狀態管理
 │   └── chart.js               # 譜面管理與讀取模組
 └── testChart/                 # 測試譜面庫 (.simai / .maidata)
 ```
@@ -199,7 +199,7 @@ SimaiRenderBot/
 
 ## 💖 致謝與鳴謝 (Credits & Acknowledgments)
 
-* **上游開源專案**：本專案的 maimai 網頁渲染核心源自於 [Susuy0725/web-mai-chart-x](https://github.com/Susuy0725/web-mai-chart-x)，在此基礎上進行架構重構與功能擴展（包含 Utage 雙人協同播放、16:9 雙機台並排渲染、滿版響應式介面、Discord Activity / Bot 深度整合、小節剪輯與短 Token 續看狀態流等）。特別感謝原作者 **Susuy0725** 開發並貢獻的網頁版播放核心！
+* **上游開源專案**：本專案的 maimai 網頁渲染核心源自於 [Susuy0725/web-mai-chart-x](https://github.com/Susuy0725/web-mai-chart-x)，在此基礎上進行架構重構與功能擴展（包含 Utage 雙人協同播放、16:9 雙機台並排渲染、滿版響應式介面、Discord Activity / Bot 深度整合、小節剪輯與訊息「繼續看譜」一鍵還原等）。特別感謝原作者 **Susuy0725** 開發並貢獻的網頁版播放核心！
 
 ---
 
