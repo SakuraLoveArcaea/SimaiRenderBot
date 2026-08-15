@@ -25,6 +25,7 @@ function parseFilenameMeta(filename) {
     'expert': 'EXPERT',
     'advanced': 'ADVANCED',
     'basic': 'BASIC',
+    'utage': '宴',
   };
 
   let title = base;
@@ -56,6 +57,35 @@ function extractSimaiMeta(text) {
   return { bpm, commaCount };
 }
 
+async function uploadFile(dirPath, filename) {
+  const fullPath = path.join(dirPath, filename);
+  const text = await fs.readFile(fullPath, 'utf8');
+  if (!text.trim()) {
+    return { skipped: true };
+  }
+
+  const { id, title, difficulty, displayName } = parseFilenameMeta(filename);
+  const { bpm, commaCount } = extractSimaiMeta(text);
+
+  const chartDoc = {
+    id,
+    name: displayName,
+    title,
+    difficulty,
+    bpm,
+    commaCount,
+    text,
+    filename,
+    sourceDir: path.basename(dirPath),
+    updatedAt: new Date().toISOString(),
+  };
+
+  // 寫入 Firestore 集合 'charts'
+  const docRef = doc(db, 'charts', id);
+  await setDoc(docRef, chartDoc, { merge: true });
+  return { success: true, id, title, difficulty, bpm, commaCount };
+}
+
 async function uploadFromDirectory(dirPath) {
   try {
     const files = await fs.readdir(dirPath);
@@ -65,43 +95,24 @@ async function uploadFromDirectory(dirPath) {
 
     let successCount = 0;
     let failCount = 0;
+    const BATCH_SIZE = 25;
 
-    for (const filename of validFiles) {
-      const fullPath = path.join(dirPath, filename);
-      try {
-        const text = await fs.readFile(fullPath, 'utf8');
-        if (!text.trim()) {
-          console.warn(`  ⚠️ 跳過空白檔案: ${filename}`);
-          continue;
+    for (let i = 0; i < validFiles.length; i += BATCH_SIZE) {
+      const chunk = validFiles.slice(i, i + BATCH_SIZE);
+      await Promise.all(chunk.map(async (filename) => {
+        try {
+          const res = await uploadFile(dirPath, filename);
+          if (res.success) {
+            successCount++;
+          }
+        } catch (err) {
+          console.error(`  ❌ 上傳失敗 (${filename}):`, err.message);
+          failCount++;
         }
-
-        const { id, title, difficulty, displayName } = parseFilenameMeta(filename);
-        const { bpm, commaCount } = extractSimaiMeta(text);
-
-        const chartDoc = {
-          id,
-          name: displayName,
-          title,
-          difficulty,
-          bpm,
-          commaCount,
-          text,
-          filename,
-          sourceDir: path.basename(dirPath),
-          updatedAt: new Date().toISOString(),
-        };
-
-        // 寫入 Firestore 集合 'charts'
-        const docRef = doc(db, 'charts', id);
-        await setDoc(docRef, chartDoc, { merge: true });
-
-        console.log(`  ✅ [${difficulty}] ${title} (BPM: ${bpm}, 段落數: ${commaCount}) -> ${id}`);
-        successCount++;
-      } catch (err) {
-        console.error(`  ❌ 上傳失敗 (${filename}):`, err.message);
-        failCount++;
-      }
+      }));
+      process.stdout.write(`\r  ⚡ 已處理進度: ${Math.min(i + BATCH_SIZE, validFiles.length)} / ${validFiles.length} (${successCount} 成功)`);
     }
+    console.log('');
 
     return { successCount, failCount };
   } catch (err) {

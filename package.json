@@ -14,6 +14,7 @@
     "test:activity": "node activity/app/smoke-test.mjs",
     "test:activity:webkit": "BROWSER_ENGINE=webkit node activity/app/smoke-test.mjs",
     "upload:charts": "node scripts/upload-charts.js",
+    "import:mdcp": "node scripts/import-mdcp.js",
     "tunnel": "cloudflared tunnel --url http://localhost:3000"
   },
   "dependencies": {
